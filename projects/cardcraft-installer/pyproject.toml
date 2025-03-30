@@ -2,7 +2,7 @@
 name = "cardcraft-installer"
 version = "0.1.0"
 description = ""
-authors = ["Luka L <licina.luka@outlook.com>"]
+authors = ["AB <a@b.com>"]
 readme = "README.md"
 
 [tool.poetry.dependencies]

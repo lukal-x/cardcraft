@@ -1,16 +1,16 @@
 [tool.poetry]
-name = "cardgames"
+name = "poke-cli"
 version = "0.1.0"
 description = ""
 authors = ["AB <a@b.com>"]
 readme = "README.md"
 
 [tool.poetry.dependencies]
-python = "^3.10"
+python = "^3.9"
+pymetasploit3 = "1.0.6"
+mamba = "0.11.3"
+expects = "0.9.0"
 pysonar-scanner = "0.2.0.520"
-django = "5.1.7"
-bandit = {version = "1.8.3", extras = ["baseline"]}
-defusedxml = "0.7.1"
 
 
 [build-system]
