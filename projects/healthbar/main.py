@@ -1,7 +1,8 @@
 from collections import deque
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field as datafield, replace
 from fractions import Fraction
 from types import SimpleNamespace as NS
+from uuid import uuid4
 import functools
 import itertools
 import json
@@ -143,6 +144,7 @@ class Tile:
     delta: Location
     sprites: Sprites
 
+    guid: str = datafield(default_factory=lambda: str(uuid4()))
     anchor_id: int = 0  # anchor ID
 
     state: typing.Literal["idle"] = "idle"
@@ -178,6 +180,7 @@ class Unit(PClass):
 
     sprites: Sprites = field(type=Sprites)
 
+    guid = field(type=str, initial=lambda: str(uuid4()))
     progress: Fraction = field(type=Fraction, initial=Fraction(1, 1))
     action: tuple[int, int, int] = field(type=tuple, initial=(100, 100, 150))
 
@@ -262,15 +265,20 @@ class Render:
             progress = [
                 Element(
                     type="RECT",
-                    rect=pg.Rect(unit.delta[0] - 100, unit.delta[1] - 100, 100, 3),
+                    rect=pg.Rect(
+                        anchor.x + unit.delta[0] - 100,
+                        anchor.y + unit.delta[1] - 100,
+                        100,
+                        3,
+                    ),
                     color=(30, 30, 30),
                     z=anchor.z + _z,
                 ),
                 Element(
                     type="RECT",
                     rect=pg.Rect(
-                        unit.delta[0] - 101,
-                        unit.delta[1] - 101,
+                        anchor.x + unit.delta[0] - 101,
+                        anchor.y + unit.delta[1] - 101,
                         round(unit.progress * 100),
                         3,
                     ),
@@ -394,8 +402,8 @@ class Game(PClass):
     units: list[Unit] = field()
     controlled: list[int] = field()  # index of unit
 
-    targets: typing.Iterable[int] = field(initial=iter([]))
-    targetted = field(type=(int, type(None)))
+    cycle = field()  # the cycle
+    targets = field()  # the tuple of targets
 
     choice = field(initial=(0, 0))
     night = field(type=bool, initial=True)
@@ -434,8 +442,21 @@ class Game(PClass):
         self, unit: Unit, game: "Game", keys: dict[int, bool], mx: int, my: int
     ) -> tuple[Unit, "Game"]:
         if keys[pg.K_TAB]:
-            # cycle targets
-            pass
+            target = next(game.cycle)
+
+            return unit, game.set(
+                "tiles",
+                list(map(lambda e: replace(e, targetted=e.guid==target), game.tiles)),
+            ).set(
+                "units",
+                list(map(lambda e: e.set("targetted", e.guid == target), game.units)),
+            ).set(
+                "others",
+                {
+                    k: v.set("targetted", v.guid == target)
+                    for k, v in game.others.items()
+                },
+            )
 
         return unit, game
 
@@ -687,6 +708,7 @@ class Game(PClass):
                         unit.state,
                         unit.health,
                         unit.stamina,
+                        unit.guid,
                     ]
                 ),
                 ("localhost", 8818),
@@ -697,9 +719,12 @@ class Game(PClass):
                 if not data:
                     return
 
-                anchor_id, player, delta, o, state, health, stamina = pickle.loads(data)
-                self.others[player] = Unit(
+                anchor_id, player, delta, o, state, health, stamina, guid = (
+                    pickle.loads(data)
+                )
+                self.others[guid] = Unit(
                     name=player,
+                    guid=guid,
                     health=health,
                     stamina=stamina,
                     o=o,
@@ -741,12 +766,12 @@ class Game(PClass):
                         "/",
                     )
 
-                    if current is None:
+                    if current == "/":
                         if not opener:
                             act.clear()
 
                     target = target.set(
-                        "progress", Fraction(len(concept), len(current))
+                        "progress", Fraction(len(concept) or 1, len(current))
                     ).set("action", as_rgb(current))
 
                     if concept == current:
@@ -770,7 +795,7 @@ if __name__ == "__main__":
 
     pg.mixer.music.load("lost in the meadows_0.flac")
     pg.mixer.music.play(-1)
-    pg.mixer.music.set_volume(0.2)
+    pg.mixer.music.set_volume(1)
 
     sound_step = [
         pg.mixer.Sound("Fantozzi-StoneL1.ogg"),
@@ -779,8 +804,8 @@ if __name__ == "__main__":
 
     foot = itertools.cycle([0, 1])
 
-    sound_step[0].set_volume(0.01)
-    sound_step[1].set_volume(0.01)
+    sound_step[0].set_volume(0.1)
+    sound_step[1].set_volume(0.1)
 
     screen = pg.display.set_mode((900, 600), pg.RESIZABLE)
     pg.display.set_caption("r/untitledMMORPG")
@@ -987,10 +1012,10 @@ if __name__ == "__main__":
         splash=True,
         events=deque([]),
         running=True,
+        targets=tuple(),
         tiles=tiles,
         units=units,
         others={},
-        targets=itertools.cycle(range(0, len(units))),
         controlled=[],
     )
 
@@ -1020,19 +1045,19 @@ if __name__ == "__main__":
                 anchor_id=1,
             )
 
-        if sys.argv[1] == "c":
-            p1 = Unit(
-                name="wolf",
-                sprites=models["wolf"],
-                client=True,
-                delta=(0, 0, 0),
-                health=80,
-                stamina=50,
-                color="blue",
-                anchor_id=2,
-            )
+        npc1 = Unit(
+            name="wolf",
+            sprites=models["wolf"],
+            client=False,
+            delta=(0, 0, 0),
+            health=80,
+            stamina=50,
+            color="blue",
+            anchor_id=2,
+        )
 
         g.units.append(p1)
+        g.units.append(npc1)
 
     if not g.tiles:
         t1 = Tile(delta=(0, 0, 0), sprites=models["ground"], anchor_id=1)
@@ -1083,7 +1108,7 @@ if __name__ == "__main__":
     while g.running:
         for ev in pg.event.get():
             if pg.QUIT == ev.type:
-                g.running = False
+                g = g.set("running", False)
 
             if pg.VIDEORESIZE == ev.type:
                 screen = pg.display.set_mode((ev.w, ev.h), pg.RESIZABLE)
@@ -1146,6 +1171,23 @@ if __name__ == "__main__":
             if acted != anchored:
                 g.units[u_idx] = acted
 
+            tile = [
+                e
+                for e in g.tiles
+                if e.anchor_id == anchored.anchor_id and g.accessible(anchored, [e.delta])
+            ]
+
+            targets = tuple(
+                set(
+                    map(
+                        operator.attrgetter("guid"),
+                        itertools.chain(tile, g.units, g.others.values()),
+                    )
+                )
+            )
+
+            if g.targets != targets:
+                g = g.set("targets", targets).set("cycle", itertools.cycle(targets))
             controlled, g = g.controls(
                 unit, g, pg.key.get_pressed(), *pg.mouse.get_pos()
             )
@@ -1186,5 +1228,5 @@ if __name__ == "__main__":
         pg.display.flip()
         clock.tick(10)
 
-    state.join()
+    # state.join()
     pg.quit()
