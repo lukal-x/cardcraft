@@ -37,6 +37,14 @@ Location = typing.NewType("Location", tuple[int, int, int])
 editor_gate = lambda cb: cb()
 
 
+def friendo(unit, game):
+    new = game.make_unit(unit)
+    return (
+        unit,
+        (game if not unit.editor else game.set("units", game.units.set(new.guid, new))),
+    )
+
+
 def modo(unit, game):
     choice = next(game.option)
 
@@ -110,17 +118,7 @@ SPELLS = {
             )
         ),
     ),
-    "friendo": lambda unit, game: (
-        unit,
-        (
-            game
-            if not unit.editor
-            else game.set(
-                "units",
-                v(*sorted(game.units + game.make_unit(unit), key=lambda e: e.delta)),
-            )
-        ),
-    ),
+    "friendo": friendo,
     "masko": lambda unit, game: (
         unit,
         (
@@ -128,15 +126,9 @@ SPELLS = {
             if not unit.editor
             else game.set(
                 "units",
-                v(
-                    *map(
-                        lambda e: (
-                            e.set("sprites", models[next(game.model)])
-                            if e.targetted
-                            else e
-                        ),
-                        game.units,
-                    )
+                game.units.transform(
+                    (next(k for k in game.units if game.units[k].targetted), "sprites"),
+                    models[next(game.model)],
                 ),
             )
         ),
@@ -336,7 +328,10 @@ class Unit(PClass):
         active = self.sprites.mode[self.state]
         image = sources[active.key]
 
-        x = next(cycles[active.key])
+        if tock:
+            frame[active.key] = next(cycles[active.key])
+
+        x = frame[active.key]
 
         if self.targetted:
             new = image.copy()
@@ -897,19 +892,17 @@ class Game(PClass):
             )
         ]
 
-    def make_unit(self, unit: Unit) -> list[Unit]:
-        return [
-            Unit(
-                name="wolpe",
-                delta=unit.delta,
-                health=20,
-                stamina=10,
-                sprites=models[self.character],
-                targetted=False,
-                o="S",
-                anchor_id=unit.anchor_id,
-            )
-        ]
+    def make_unit(self, unit: Unit) -> Unit:
+        return Unit(
+            name="wolpe",
+            delta=unit.delta,
+            health=20,
+            stamina=10,
+            sprites=models[self.character],
+            targetted=False,
+            o="S",
+            anchor_id=unit.anchor_id,
+        )
 
 
 if __name__ == "__main__":
@@ -1007,6 +1000,7 @@ if __name__ == "__main__":
     camera = NS(x=0, y=0)
 
     cycles: dict[str, typing.Iterable] = {"ground_idle": itertools.cycle([])}
+    frame: dict[str, typing.Any] = {}
 
     sources: dict[str, pg.image] = {
         "ground_idle": pg.image.load("spritesheet.png").convert_alpha()
@@ -1037,6 +1031,7 @@ if __name__ == "__main__":
             key = f"{model}_{mode}"
             cycles[key] = itertools.cycle(range(0, img.width, 32))
             sources[key] = img.convert_alpha()
+            frame[key] = 0
 
             modes[mode] = Sprite(key=key)
 
@@ -1228,7 +1223,15 @@ if __name__ == "__main__":
     virtual = pg.Surface((640, 480))
     act = []
 
+    last = pg.time.get_ticks()
     while g.running:
+        tock = False
+        now = pg.time.get_ticks()
+
+        if now - last >= 200:
+            tock = True
+            last = now
+
         for ev in pg.event.get():
             if pg.QUIT == ev.type:
                 g = g.set("running", False)
@@ -1253,7 +1256,7 @@ if __name__ == "__main__":
             )
 
             if moved != initial:
-                if moved.stepped % 4 == 0:
+                if tock: # moved.stepped % 5 == 0:
                     sound_step[next(foot)].play()
                 g = g.set("units", g.units.set(guid, moved))
 
