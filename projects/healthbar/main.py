@@ -20,7 +20,7 @@ import typing
 
 
 from matplotlib import pyplot
-from pyrsistent import PClass, PMap, PVector, field, m, v
+from pyrsistent import PClass, PMap, PVector, field, m, ny, v
 import networkx as nx
 import pygame as pg
 
@@ -33,9 +33,127 @@ def as_rgb(t: str) -> tuple[int, int, int]:
 Element = NS
 Location = typing.NewType("Location", tuple[int, int, int])
 
+
+editor_gate = lambda cb: cb()
+
+
+def modo(unit, game):
+    choice = next(game.option)
+
+    return (
+        unit,
+        (
+            game
+            if not unit.editor
+            else game.set("choice", choice).set(
+                "tiles",
+                list(
+                    map(
+                        lambda e: (replace(e, choice=choice) if e.targetted else e),
+                        game.tiles,
+                    )
+                ),
+            )
+        ),
+    )
+
+
 SPELLS = {
-    "mag ludm": lambda unit: unit.set("editor", not unit.editor),
-    "hic": lambda unit: unit,
+    "mag ludm": lambda unit, game: (unit.set("editor", not unit.editor), game),
+    "hic": lambda unit, game: (unit, game),
+    "conjo": lambda unit, game: (
+        unit,
+        (
+            game
+            if not unit.editor
+            else game.set(
+                "tiles",
+                sorted(game.tiles + game.make_tile(unit), key=lambda e: e.delta),
+            )
+        ),
+    ),
+    "modo": modo,
+    "uso": lambda unit, game: (
+        unit,
+        (
+            game
+            if not unit.editor
+            else game.set(
+                "tiles",
+                list(
+                    map(
+                        lambda e: replace(e, choice=game.choice) if e.targetted else e,
+                        game.tiles,
+                    )
+                ),
+            )
+        ),
+    ),
+    "wipo": lambda unit, game: (
+        unit,
+        (
+            game
+            if not unit.editor
+            else game.set(
+                "tiles",
+                list(
+                    filter(
+                        lambda e: not e.targetted
+                        or (
+                            game.position(*unit.delta) == e.delta
+                            if unit.anchor_id == e.anchor_id
+                            else True
+                        ),
+                        game.tiles,
+                    )
+                ),
+            )
+        ),
+    ),
+    "friendo": lambda unit, game: (
+        unit,
+        (
+            game
+            if not unit.editor
+            else game.set(
+                "units",
+                v(*sorted(game.units + game.make_unit(unit), key=lambda e: e.delta)),
+            )
+        ),
+    ),
+    "masko": lambda unit, game: (
+        unit,
+        (
+            game
+            if not unit.editor
+            else game.set(
+                "units",
+                v(
+                    *map(
+                        lambda e: (
+                            e.set("sprites", models[next(game.model)])
+                            if e.targetted
+                            else e
+                        ),
+                        game.units,
+                    )
+                ),
+            )
+        ),
+    ),
+    "byeo": lambda unit, game: (
+        unit,
+        (
+            game
+            if not unit.editor
+            else game.set(
+                "units",
+                game.units.discard(
+                    next(k for k in game.units if game.units[k].targetted)
+                ),
+            )
+        ),
+    ),
 }
 
 CRAFTS = {}
@@ -392,6 +510,7 @@ class Render:
 
 class Game(PClass):
     option: typing.Iterator = field()
+    model = field()
 
     splash: bool = field()
     events: deque = field()
@@ -399,13 +518,14 @@ class Game(PClass):
 
     tiles: list[Tile] = field()
     others: dict[str, [Unit]] = field()  # easier to keep a separate list
-    units: list[Unit] = field()
+    units: PMap[str, PVector[Unit]] = field(type=PMap)
     controlled: list[int] = field()  # index of unit
 
     cycle = field()  # the cycle
     targets = field()  # the tuple of targets
 
     choice = field(initial=(0, 0))
+    character = field(type=str)
     night = field(type=bool, initial=True)
 
     def elements(self) -> list[Element]:
@@ -424,7 +544,10 @@ class Game(PClass):
             *map(
                 project,
                 itertools.chain(
-                    *map(Render.unit, itertools.chain(self.units, self.others.values()))
+                    *map(
+                        Render.unit,
+                        itertools.chain(self.units.values(), self.others.values()),
+                    )
                 ),
             ),
             *map(
@@ -432,7 +555,7 @@ class Game(PClass):
                 itertools.chain(
                     *map(
                         Render.resources,
-                        itertools.chain(self.units, self.others.values()),
+                        itertools.chain(self.units.values(), self.others.values()),
                     )
                 ),
             ),
@@ -446,10 +569,12 @@ class Game(PClass):
 
             return unit, game.set(
                 "tiles",
-                list(map(lambda e: replace(e, targetted=e.guid==target), game.tiles)),
+                list(map(lambda e: replace(e, targetted=e.guid == target), game.tiles)),
             ).set(
                 "units",
-                list(map(lambda e: e.set("targetted", e.guid == target), game.units)),
+                game.units.transform(
+                    [ny], lambda e: e.set("targetted", e.guid == target)
+                ),
             ).set(
                 "others",
                 {
@@ -620,47 +745,7 @@ class Game(PClass):
                 if keys[pg.K_x]:
                     target.z = 0
 
-        if player.editor and keys[pg.K_g]:
-            params = [-1]
-
-            r = rebase = lambda v: 32 * (v // 32)
-
-            match player.o:
-                case "S":
-                    params = r(_x), r(_y) + 32, r(_z)
-                case "E":
-                    params = r(_x) + 32, r(_y), r(_z)
-                case "W":
-                    params = r(_x) - 32, r(_y), r(_z)
-                case "N":
-                    params = r(_x), r(_y) - 32, r(_z)
-
-            if keys[pg.K_g] and self.at_tile(*params) < 0:
-                self.tiles.append(
-                    Tile(
-                        params,
-                        choice=self.choice,
-                        sprites=models["ground"],
-                        anchor_id=player.anchor_id,
-                    )
-                )
-
-                self.tiles = sorted(self.tiles, key=lambda e: e.delta)
-
         if player.editor and keys[pg.K_t]:
-            self.units.append(
-                Unit(
-                    delta=(_x, _y, _z),
-                    health=20,
-                    stamina=10,
-                    sprites=random.choice(
-                        [models["wolf"], models["boar"], models["stag"]]
-                    ),
-                    targetted=False,
-                    o="S",
-                    anchor_id=player.anchor_id,
-                )
-            )
 
             self.targets = itertools.cycle(range(0, len(self.units)))
 
@@ -749,7 +834,6 @@ class Game(PClass):
             if ev is not None:
                 if ev.type == pg.KEYDOWN:
                     # hotkeys/actions
-
                     opener = ev.unicode == "/"
 
                     if opener:
@@ -776,7 +860,7 @@ class Game(PClass):
 
                     if concept == current:
                         act.clear()
-                        target = ACTIONS[concept](target)
+                        target, game = ACTIONS[concept](target, game)
 
                 if ev.type == pg.MOUSEMOTION:
                     pass
@@ -784,6 +868,48 @@ class Game(PClass):
             time.sleep(0.01)
 
         return act, target, game
+
+    def make_tile(self, unit: Unit) -> list[Tile]:
+        params = [-1]
+
+        r = rebase = lambda v: 32 * (v // 32)
+        _x, _y, _z = unit.delta
+
+        match unit.o:
+            case "S":
+                params = r(_x), r(_y) + 32, r(_z)
+            case "E":
+                params = r(_x) + 32, r(_y), r(_z)
+            case "W":
+                params = r(_x) - 32, r(_y), r(_z)
+            case "N":
+                params = r(_x), r(_y) - 32, r(_z)
+
+        if any(e for e in self.tiles if e.delta == params):
+            return []
+
+        return [
+            Tile(
+                params,
+                choice=self.choice,
+                sprites=models["ground"],
+                anchor_id=unit.anchor_id,
+            )
+        ]
+
+    def make_unit(self, unit: Unit) -> list[Unit]:
+        return [
+            Unit(
+                name="wolpe",
+                delta=unit.delta,
+                health=20,
+                stamina=10,
+                sprites=models[self.character],
+                targetted=False,
+                o="S",
+                anchor_id=unit.anchor_id,
+            )
+        ]
 
 
 if __name__ == "__main__":
@@ -992,10 +1118,10 @@ if __name__ == "__main__":
 
     with open("universe.json", "r") as f:
         tiles = []
-        units = []
+        units = m()
         for e in json.loads(f.read()):
             if "client" in e:
-                units.append(Unit.fromdict(e))
+                units = units.set(e["guid"], Unit.fromdict(e))
                 continue
 
             tiles.append(Tile.fromdict(e))
@@ -1009,11 +1135,13 @@ if __name__ == "__main__":
                 )
             )
         ),
+        model=itertools.cycle(["stag", "boar", "wolf"]),
         splash=True,
         events=deque([]),
         running=True,
         targets=tuple(),
         tiles=tiles,
+        character="stag",
         units=units,
         others={},
         controlled=[],
@@ -1056,8 +1184,7 @@ if __name__ == "__main__":
             anchor_id=2,
         )
 
-        g.units.append(p1)
-        g.units.append(npc1)
+        g = g.set("units", g.units.set(p1.guid, p1).set(npc1.guid, npc1))
 
     if not g.tiles:
         t1 = Tile(delta=(0, 0, 0), sprites=models["ground"], anchor_id=1)
@@ -1091,11 +1218,7 @@ if __name__ == "__main__":
 
             g.tiles.append(t11)
 
-    g = (
-        g.set("units", sorted(g.units, key=operator.attrgetter("client")))
-        .set("controlled", [len(g.units) - 1])
-        .set("running", True)
-    )
+    g = g.set("units", g.units).set("controlled", [p1.guid]).set("running", True)
 
     clock = pg.time.Clock()
 
@@ -1119,8 +1242,8 @@ if __name__ == "__main__":
             pg.quit()
             break
 
-        for u_idx, unit in enumerate(g.units):
-            if u_idx not in g.controlled:
+        for guid, unit in g.units.items():
+            if guid not in g.controlled:
                 continue
 
             initial: Unit = unit
@@ -1132,12 +1255,12 @@ if __name__ == "__main__":
             if moved != initial:
                 if moved.stepped % 4 == 0:
                     sound_step[next(foot)].play()
-                g.units[u_idx] = moved
+                g = g.set("units", g.units.set(guid, moved))
 
             anchored: Unit = g.anchoring(moved) or moved
 
             if anchored != moved:
-                g.units[u_idx] = anchored
+                g = g.set("units", g.units.set(guid, anchored))
 
             relevant = lambda to, e: e.anchor_id == to
 
@@ -1165,29 +1288,33 @@ if __name__ == "__main__":
                 legal = legal or possible
 
             if not legal:
-                g.units[u_idx] = initial
+                g = g.set("units", g.units.set(guid, initial))
 
             act, acted, g = g.act(act, anchored, g)
             if acted != anchored:
-                g.units[u_idx] = acted
+                g = g.set("units", g.units.set(guid, acted))
 
-            tile = [
-                e
-                for e in g.tiles
-                if e.anchor_id == anchored.anchor_id and g.accessible(anchored, [e.delta])
-            ]
+            tile = []
+            if anchored.editor:
+                tile = [
+                    e
+                    for e in g.tiles
+                    if e.anchor_id == anchored.anchor_id
+                    and g.accessible(anchored, [e.delta])
+                ]
 
             targets = tuple(
                 set(
                     map(
                         operator.attrgetter("guid"),
-                        itertools.chain(tile, g.units, g.others.values()),
+                        itertools.chain(tile, g.units.values(), g.others.values()),
                     )
                 )
             )
 
             if g.targets != targets:
                 g = g.set("targets", targets).set("cycle", itertools.cycle(targets))
+
             controlled, g = g.controls(
                 unit, g, pg.key.get_pressed(), *pg.mouse.get_pos()
             )
