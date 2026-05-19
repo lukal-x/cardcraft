@@ -263,7 +263,7 @@ class Tile:
 
     @classmethod
     def fromdict(cls, data: dict):
-        return Tile(**dict(data, sprites=Sprites.fromdict(data["sprites"])))
+        return Tile(**dict(data, delta=tuple(data["delta"]), sprites=Sprites.fromdict(data["sprites"])))
 
     def relative(self, startpoint: Location, change: Location) -> Location:
         return tuple(a - b + c for a, b, c in zip(startpoint, change, self.delta))
@@ -578,6 +578,11 @@ class Game(PClass):
                 },
             )
 
+        if (keys[pg.K_s] and keys[pg.K_LCTRL]):
+            with open("universe.json", "w+") as f:
+                f.write(json.dumps(list(map(asdict, game.tiles))))
+                time.sleep(3)
+            
         return unit, game
 
     def anchoring(self, unit: Unit) -> Unit | None:
@@ -739,22 +744,6 @@ class Game(PClass):
 
                 if keys[pg.K_x]:
                     target.z = 0
-
-        if player.editor and keys[pg.K_t]:
-
-            self.targets = itertools.cycle(range(0, len(self.units)))
-
-        if player.editor and (keys[pg.K_s] and keys[pg.K_LCTRL]):
-            universe = json.dumps(
-                list(map(asdict, self.tiles)) + list(map(asdict, self.units))
-            )
-            self.running = False
-
-            with open("universe.json", "w") as f:
-                f.write(universe)
-
-            time.sleep(1)
-            self.running = True
 
         if keys[pg.K_SPACE]:
             camera.x, camera.y = iso(-1 * _x, -1 * _y)
@@ -1118,9 +1107,9 @@ if __name__ == "__main__":
             if "client" in e:
                 units = units.set(e["guid"], Unit.fromdict(e))
                 continue
-
+                
             tiles.append(Tile.fromdict(e))
-
+                
     g = Game(
         option=itertools.cycle(
             list(
@@ -1212,6 +1201,7 @@ if __name__ == "__main__":
             g.tiles.append(t10)
 
             g.tiles.append(t11)
+
 
     g = g.set("units", g.units).set("controlled", [p1.guid]).set("running", True)
 
