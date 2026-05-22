@@ -1,5 +1,11 @@
 from collections import deque
-from dataclasses import asdict, dataclass, field as datafield, replace
+from dataclasses import (
+    asdict,
+    dataclass,
+    field as datafield,
+    fields as datafields,
+    replace,
+)
 from fractions import Fraction
 from types import SimpleNamespace as NS
 from uuid import uuid4
@@ -67,9 +73,9 @@ def modo(unit, game):
 
 
 SPELLS = {
-    "mag ludm": lambda unit, game: (unit.set("editor", not unit.editor), game),
+    "gemumasuta": lambda unit, game: (unit.set("editor", not unit.editor), game),
     "hic": lambda unit, game: (unit, game),
-    "conjo": lambda unit, game: (
+    "kiku": lambda unit, game: (
         unit,
         (
             game
@@ -80,8 +86,8 @@ SPELLS = {
             )
         ),
     ),
-    "modo": modo,
-    "uso": lambda unit, game: (
+    "saibai": modo,
+    "henshin": lambda unit, game: (
         unit,
         (
             game
@@ -97,7 +103,7 @@ SPELLS = {
             )
         ),
     ),
-    "wipo": lambda unit, game: (
+    "torinozoku": lambda unit, game: (
         unit,
         (
             game
@@ -118,8 +124,8 @@ SPELLS = {
             )
         ),
     ),
-    "friendo": friendo,
-    "masko": lambda unit, game: (
+    "yujin": friendo,
+    "masuku": lambda unit, game: (
         unit,
         (
             game
@@ -133,7 +139,7 @@ SPELLS = {
             )
         ),
     ),
-    "byeo": lambda unit, game: (
+    "kieru": lambda unit, game: (
         unit,
         (
             game
@@ -146,6 +152,24 @@ SPELLS = {
             )
         ),
     ),
+    "ugoku": lambda unit, game: (
+        (
+            unit
+            if not unit.editor
+            else unit.set(
+                "effects",
+                unit.effects.append(
+                    Effect(
+                        tags=v(*["game-master"]),
+                        name="mover",
+                        started_at=game.ticks // 1000,
+                        duration=30,
+                    )
+                ),
+            )
+        ),
+        game,
+    ),  # move targeted thing
 }
 
 CRAFTS = {}
@@ -176,6 +200,9 @@ class Anchor:
 
     offset: Location  # position relative to its anchor, (0, 0, 0) when it is the first
 
+    guid: str = datafield(default_factory=lambda: str(uuid4()))
+
+    targetted: bool = False
     delta: Location = (0, 0, 0)  # delta from another anchor
 
     enabled: bool = False
@@ -227,6 +254,14 @@ class Anchors:
         return self.table[id - 1]
 
 
+class Effect(PClass):
+    tags: PVector[str] = field()
+    name: str = field()
+    started_at: int = field()
+    duration: int = field()  # in seconds
+    value: int = field(initial=0)
+
+
 @dataclass
 class Sprite:
     key: str
@@ -263,7 +298,13 @@ class Tile:
 
     @classmethod
     def fromdict(cls, data: dict):
-        return Tile(**dict(data, delta=tuple(data["delta"]), sprites=Sprites.fromdict(data["sprites"])))
+        return Tile(
+            **dict(
+                data,
+                delta=tuple(data["delta"]),
+                sprites=Sprites.fromdict(data["sprites"]),
+            )
+        )
 
     def relative(self, startpoint: Location, change: Location) -> Location:
         return tuple(a - b + c for a, b, c in zip(startpoint, change, self.delta))
@@ -288,6 +329,7 @@ class Unit(PClass):
     health: int = field(int)
     stamina: int = field(int)
 
+    effects: PVector[Effect] = field(initial=v())
     sprites: Sprites = field(type=Sprites)
 
     guid = field(type=str, initial=lambda: str(uuid4()))
@@ -314,7 +356,13 @@ class Unit(PClass):
 
     @classmethod
     def fromdict(cls, data: dict):
-        return Unit(**dict(data, sprites=Sprites.fromdict(data["sprites"])))
+        return Unit(
+            **dict(
+                data,
+                effects=v(*data.get("effects", [])),
+                sprites=Sprites.fromdict(data["sprites"]),
+            )
+        )
 
     def relative(self, startpoint: Location, change: Location) -> Location:
         return tuple(a - b + c for a, b, c in zip(startpoint, change, self.delta))
@@ -366,8 +414,16 @@ class Render:
         stats = pg.font.SysFont(None, 14).render(
             f"{unit.health}/{unit.stamina*3}", True, (255, 255, 255)
         )
+
+        effects = unit.effects
+
+        title = unit.name
+        if unit.effects:
+            for e in unit.effects:
+                title += " " + e.name
+
         state = pg.font.SysFont(None, 14).render(
-            f"{unit.name}: Game master" if (unit.editor) else unit.name,
+            (f"{title}: Game master" if (unit.editor) else title),
             True,
             (255, 255, 255),
         )
@@ -458,8 +514,8 @@ class Render:
             Element(
                 type="IMAGE",
                 obj=obj,
-                rect=(anchor.x + _x, anchor.y + _y, 32, 32),
-                z=anchor.z + _z,
+                rect=(anchor.delta[0] + _x, anchor.delta[1] + _y, 32, 32),
+                z=anchor.delta[2] + _z,
             )
         ]
 
@@ -502,11 +558,24 @@ class Render:
 
         return visible
 
+    @staticmethod
+    def anchor(anchor: Anchor) -> list[Element]:
+        return [
+            Element(
+                type="ELLIPSE",
+                color="pink",
+                rect=(anchor.delta[0], anchor.delta[1], 32, 32 / 2),
+                z=anchor.delta[2],
+                width=2,
+            )
+        ]
+
 
 class Game(PClass):
     option: typing.Iterator = field()
     model = field()
 
+    ticks: int = field()
     splash: bool = field()
     events: deque = field()
     running: bool = field()
@@ -533,7 +602,10 @@ class Game(PClass):
             *map(
                 project,
                 itertools.chain(
-                    *map(functools.partial(Render.tile, player), self.tiles)
+                    *map(
+                        functools.partial(Render.tile, player),
+                        sorted(self.tiles, key=lambda e: e.delta),
+                    )
                 ),
             ),
             *map(
@@ -554,48 +626,87 @@ class Game(PClass):
                     )
                 ),
             ),
+            *map(
+                project,
+                itertools.chain(
+                    *map(Render.anchor, filter(lambda e: e.targetted, anchors.table))
+                ),
+            ),
         ]
 
-    def controls(
-        self, unit: Unit, game: "Game", keys: dict[int, bool], mx: int, my: int
-    ) -> tuple[Unit, "Game"]:
+    def controls(self, keys: dict[int, bool], mx: int, my: int) -> "Game":
         if keys[pg.K_TAB]:
-            target = next(game.cycle)
+            target = next(self.cycle)
 
-            return unit, game.set(
-                "tiles",
-                list(map(lambda e: replace(e, targetted=e.guid == target), game.tiles)),
-            ).set(
-                "units",
-                game.units.transform(
-                    [ny], lambda e: e.set("targetted", e.guid == target)
-                ),
-            ).set(
-                "others",
-                {
-                    k: v.set("targetted", v.guid == target)
-                    for k, v in game.others.items()
-                },
+            for a_idx, anchor in enumerate(anchors.table):
+                anchors.table[a_idx].targetted = anchor.guid == target
+
+            return (
+                self.set(
+                    "tiles",
+                    list(
+                        map(
+                            lambda e: replace(e, targetted=e.guid == target), self.tiles
+                        )
+                    ),
+                )
+                .set(
+                    "units",
+                    self.units.transform(
+                        [ny], lambda e: e.set("targetted", e.guid == target)
+                    ),
+                )
+                .set(
+                    "others",
+                    {
+                        k: v.set("targetted", v.guid == target)
+                        for k, v in self.others.items()
+                    },
+                )
             )
 
-        if (keys[pg.K_s] and keys[pg.K_LCTRL]):
+        if keys[pg.K_s] and keys[pg.K_LCTRL]:
             with open("universe.json", "w+") as f:
-                f.write(json.dumps(list(map(asdict, game.tiles))))
-                time.sleep(3)
-            
-        return unit, game
+                f.write(json.dumps(list(map(asdict, self.tiles))))
+                time.self(3)
 
-    def anchoring(self, unit: Unit) -> Unit | None:
+        if not pg.mouse.get_focused():
+            return self
+
+        padding = screen.width // 12
+
+        if mx <= padding:
+            camera.x += 10
+
+        if mx >= screen.width - padding:
+            camera.x -= 10
+
+        if my <= padding:
+            camera.y += 10
+
+        if my >= screen.height - padding:
+            camera.y -= 10
+
+        return self
+
+    def anchoring(self) -> "Game":
+        unit: Unit = self.units[self.controlled[0]]
+
         candidate = self.facing(unit)
         if candidate is None:
-            return None
+            return self
 
         _, ref_id, edge = candidate
         pos = unit.relative((0, 0, 0), edge["delta"])
         new = anchors.get(ref_id)
 
-        if new.within(pos):
-            return unit.set("anchor_id", new.id).set("delta", pos)
+        if not new.within(pos):
+            return self
+
+        return self.transform(
+            ("units", unit.guid),
+            lambda e: e.set("anchor_id", new.id).set("delta", pos),
+        )
 
     def accessible(self, unit: Unit, relevant: list[Location]) -> bool:
         return self.position(*unit.delta) in relevant
@@ -625,145 +736,89 @@ class Game(PClass):
 
         return candidate
 
-    def movements(
-        self, unit: Unit, keys: dict[int, bool], mx: int, my: int
-    ) -> Unit | None:
-        if not any([keys[k] for k in [pg.K_w, pg.K_s, pg.K_a, pg.K_d]]):
-            return unit.set("state", "idle").set("stepped", 0)
+    def movements(self, keys: dict[int, bool], mx: int, my: int) -> "Game":
+        target: Anchor | Unit | None = self.units[self.controlled[0]]
 
-        distance = unit.distance()
-        runner: Unit = unit.set("state", "run").set(
-            "stepped", unit.stepped + 1 if unit.stepped < 100 else 6
-        )
+        if unit.editor and any(filter(lambda e: e.name == "mover", unit.effects)):
+            target = next(filter(operator.attrgetter("targetted"), anchors.table), None)
 
-        if keys[pg.K_w]:
-            return runner.set("o", "N").set(
-                "delta", (unit.delta[0], unit.delta[1] - distance, unit.delta[2])
+            if target is None:
+                target = next(
+                    filter(operator.attrgetter("targetted"), self.units.values()), None
+                )
+
+        if isinstance(target, Unit):
+            if not any([keys[k] for k in [pg.K_w, pg.K_s, pg.K_a, pg.K_d]]):
+                return self.transform(
+                    ("units", target.guid),
+                    lambda e: e.set("state", "idle").set("stepped", 0),
+                )
+
+            distance = target.distance()
+            runner: Unit = target.set("state", "run").set(
+                "stepped", target.stepped + 1 if target.stepped < 100 else 6
             )
-
-        if keys[pg.K_s]:
-            return runner.set("o", "S").set(
-                "delta", (unit.delta[0], unit.delta[1] + distance, unit.delta[2])
-            )
-
-        if keys[pg.K_a]:
-            return runner.set("o", "W").set(
-                "delta", (unit.delta[0] - distance, unit.delta[1], unit.delta[2])
-            )
-
-        if keys[pg.K_d]:
-            return runner.set("o", "E").set(
-                "delta", (unit.delta[0] + distance, unit.delta[1], unit.delta[2])
-            )
-
-        return None
-
-    def control(self, keys: dict[int, bool], mx: int, my: int):
-        player = self.units[self.controlled[0]]
-        _x, _y, _z = player.delta
-
-        for u_idx in self.controlled:
-            unit = self.units[u_idx]
-            x, y, z = unit.delta
-
-            if not any([keys[pg.K_w], keys[pg.K_s], keys[pg.K_a], keys[pg.K_d]]):
-
-                unit.state = "idle"
-                unit.stepped = 0
-                step = 0
-            else:
-                # camera.x, camera.y = iso(-1 * _x, -1 * _y)
-                step = unit.step()
 
             if keys[pg.K_w]:
-                position = self.at_tile(x, y - step, z)
-                if -1 < position:
-                    # unit.z = self.accessible[position][-1]
-                    unit.o = "N"
-                    unit.delta = (x, y - step, z)
+                runner = runner.set("o", "N").set(
+                    "delta",
+                    (target.delta[0], target.delta[1] - distance, target.delta[2]),
+                )
 
             if keys[pg.K_s]:
-                position = self.at_tile(x, y + step, z)
-                if -1 < position:
-                    unit.o = "S"
-                    unit.delta = (x, y + step, z)
+                runner = runner.set("o", "S").set(
+                    "delta",
+                    (target.delta[0], target.delta[1] + distance, target.delta[2]),
+                )
 
             if keys[pg.K_a]:
-                position = self.at_tile(x - step, y, z)
-                if -1 < position:
-                    unit.o = "W"
-                    unit.delta = (x - step, y, z)
+                runner = runner.set("o", "W").set(
+                    "delta",
+                    (target.delta[0] - distance, target.delta[1], target.delta[2]),
+                )
 
             if keys[pg.K_d]:
-                position = self.at_tile(x + step, y, z)
-                if -1 < position:
-                    unit.o = "E"
-                    unit.delta = (x + step, y, z)
+                runner = runner.set("o", "E").set(
+                    "delta",
+                    (target.delta[0] + distance, target.delta[1], target.delta[2]),
+                )
 
-        if keys[pg.K_TAB]:
-            if not player.editor:
-                self.targetted = next(self.targets)
-                for e in self.units:
-                    e.targetted = False
+            return self.transform(("units", runner.guid), lambda e: runner)
 
-                self.units[self.targetted].targetted = True
+        if isinstance(target, Anchor):
+            idx = anchors.table.index(target)
+            x, y, z = target.delta
+            if keys[pg.K_w]:
+                target.delta = (x, y - 32, z)
+            if keys[pg.K_s]:
+                target.delta = (x, y + 32, z)
+            if keys[pg.K_a]:
+                target.delta = (x - 32, y, z)
+            if keys[pg.K_d]:
+                target.delta = (x + 32, y, z)
 
-            if player.editor:
-                player = self.units[self.controlled[0]]
-                nearby = lambda e: e.delta[0] in range(_x - 16, _x + 16) and e.delta[
-                    1
-                ] in range(_y - 16, _y + 16)
+            u, v, data = list(world.edges(target.id, data=True))[0]
+            # data["delta"] = target.delta
+            data["weight"] = math.dist(anchors.get(u).delta, anchors.get(v).delta)
 
-                target = next(filter(nearby, self.tiles), None)
+            world.add_edge(u, v, **data)
+            return self
 
-                if target is not None:
-                    for e in self.tiles:
-                        e.targetted = e == target
+        return self
 
-        if player.editor and (
-            keys[pg.K_f] or keys[pg.K_r] or keys[pg.K_y] or keys[pg.K_h] or keys[pg.K_x]
-        ):
-            target = next(filter(operator.attrgetter("targetted"), self.tiles), None)
-            if target is not None:
-                if keys[pg.K_f]:
-                    target.choice = next(self.option)
-                    self.choice = target.choice
+    def effects(self) -> "Game":
+        unit: Unit = self.units[self.controlled[0]]
+        game = self
 
-                if keys[pg.K_r]:
-                    target.choice = self.choice
+        for e_idx, e in enumerate(unit.effects):
+            if "game-master" in e.tags:
+                if e.started_at + e.duration < self.ticks // 1000:
+                    game = self.transform(
+                        ("units", unit.guid),
+                        lambda e: e.set("effects", unit.effects.delete(e_idx)),
+                    )
 
-                if keys[pg.K_y]:
-                    target.z += 1
-                    if target.z > 100:
-                        target.z = -100
-
-                if keys[pg.K_h]:
-                    target.z -= 1
-                    if target.z < -100:
-                        target.z = 100
-
-                if keys[pg.K_x]:
-                    target.z = 0
-
-        if keys[pg.K_SPACE]:
-            camera.x, camera.y = iso(-1 * _x, -1 * _y)
-
-        if not pg.mouse.get_focused():
-            return
-
-        padding = screen.width // 12
-
-        if mx <= padding:
-            camera.x += 10
-
-        if mx >= screen.width - padding:
-            camera.x -= 10
-
-        if my <= padding:
-            camera.y += 10
-
-        if my >= screen.height - padding:
-            camera.y -= 10
+        return game
 
     def notify(self, unit: PMap) -> None:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
@@ -810,9 +865,13 @@ class Game(PClass):
 
         return (_x, _y, _z)
 
-    def act(
-        self, act: list[str], target: Unit, game: "Game"
-    ) -> tuple[list[str], Unit, "Game"]:
+    def act(self, act: list[str]) -> tuple[list[str], "Game"]:
+        game = self
+        target = next(
+            filter(operator.attrgetter("targetted"), self.units.values()), None
+        )
+        target = target or self.units[self.controlled[0]]
+
         while self.events:
             ev = self.events.popleft()
             if ev is not None:
@@ -851,7 +910,7 @@ class Game(PClass):
 
             time.sleep(0.01)
 
-        return act, target, game
+        return act, game.transform(("units", target.guid), lambda e: target)
 
     def make_tile(self, unit: Unit) -> list[Tile]:
         params = [-1]
@@ -931,7 +990,7 @@ if __name__ == "__main__":
     anchors.add(
         dict(
             radius=32,
-            delta=(32 * 6, 0, 0),
+            delta=(32 * 7, 0, 0),
             enabled=True,
         )
     )
@@ -1107,9 +1166,9 @@ if __name__ == "__main__":
             if "client" in e:
                 units = units.set(e["guid"], Unit.fromdict(e))
                 continue
-                
+
             tiles.append(Tile.fromdict(e))
-                
+
     g = Game(
         option=itertools.cycle(
             list(
@@ -1120,6 +1179,7 @@ if __name__ == "__main__":
             )
         ),
         model=itertools.cycle(["stag", "boar", "wolf"]),
+        ticks=pg.time.get_ticks(),
         splash=True,
         events=deque([]),
         running=True,
@@ -1202,7 +1262,6 @@ if __name__ == "__main__":
 
             g.tiles.append(t11)
 
-
     g = g.set("units", g.units).set("controlled", [p1.guid]).set("running", True)
 
     clock = pg.time.Clock()
@@ -1235,46 +1294,42 @@ if __name__ == "__main__":
             pg.quit()
             break
 
+        g = g.set("ticks", now)
+
         for guid, unit in g.units.items():
             if guid not in g.controlled:
                 continue
 
             initial: Unit = unit
 
-            moved: Unit = (
-                g.movements(unit, pg.key.get_pressed(), *pg.mouse.get_pos()) or initial
-            )
+            g = g.movements(pg.key.get_pressed(), *pg.mouse.get_pos())
 
-            if moved != initial:
-                if tock: # moved.stepped % 5 == 0:
-                    sound_step[next(foot)].play()
-                g = g.set("units", g.units.set(guid, moved))
+            if tock:  # g.units[guid].stepped % 5 == 0:
+                pass  # sound_step[next(foot)].play()
 
-            anchored: Unit = g.anchoring(moved) or moved
-
-            if anchored != moved:
-                g = g.set("units", g.units.set(guid, anchored))
+            g = g.anchoring()
 
             relevant = lambda to, e: e.anchor_id == to
-
-            is_relevant = functools.partial(relevant, anchored.anchor_id)
+            is_relevant = functools.partial(relevant, g.units[guid].anchor_id)
 
             legal: bool = g.accessible(
-                anchored,
+                g.units[guid],
                 map(
                     operator.attrgetter("delta"),
                     filter(is_relevant, g.tiles),
                 ),
             )
 
-            candidate = g.facing(anchored)
+            candidate = g.facing(g.units[guid])
             if candidate is not None:
                 one, other, edge = candidate
 
                 is_relevant = functools.partial(relevant, other)
 
                 possible = g.accessible(
-                    anchored.set("delta", anchored.relative((0, 0, 0), edge["delta"])),
+                    g.units[guid].set(
+                        "delta", g.units[guid].relative((0, 0, 0), edge["delta"])
+                    ),
                     map(operator.attrgetter("delta"), filter(is_relevant, g.tiles)),
                 )
 
@@ -1283,24 +1338,24 @@ if __name__ == "__main__":
             if not legal:
                 g = g.set("units", g.units.set(guid, initial))
 
-            act, acted, g = g.act(act, anchored, g)
-            if acted != anchored:
-                g = g.set("units", g.units.set(guid, acted))
+            act, g = g.act(act)
 
             tile = []
-            if anchored.editor:
+            if g.units[guid].editor:
                 tile = [
                     e
                     for e in g.tiles
-                    if e.anchor_id == anchored.anchor_id
-                    and g.accessible(anchored, [e.delta])
+                    if e.anchor_id == g.units[guid].anchor_id
+                    and g.accessible(g.units[guid], [e.delta])
                 ]
 
             targets = tuple(
                 set(
                     map(
                         operator.attrgetter("guid"),
-                        itertools.chain(tile, g.units.values(), g.others.values()),
+                        itertools.chain(
+                            tile, g.units.values(), g.others.values(), anchors.table
+                        ),
                     )
                 )
             )
@@ -1308,9 +1363,8 @@ if __name__ == "__main__":
             if g.targets != targets:
                 g = g.set("targets", targets).set("cycle", itertools.cycle(targets))
 
-            controlled, g = g.controls(
-                unit, g, pg.key.get_pressed(), *pg.mouse.get_pos()
-            )
+            g = g.controls(pg.key.get_pressed(), *pg.mouse.get_pos())
+            g = g.effects()
 
         if pg.time.get_ticks() % 2000:
             g.notify(g.units[g.controlled[0]])
