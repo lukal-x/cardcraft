@@ -435,24 +435,24 @@ class Render:
                 Element(
                     type="RECT",
                     rect=pg.Rect(
-                        anchor.x + unit.delta[0] - 100,
-                        anchor.y + unit.delta[1] - 100,
+                        anchor.delta[0] + unit.delta[0] - 100,
+                        anchor.delta[1] + unit.delta[1] - 100,
                         100,
                         3,
                     ),
                     color=(30, 30, 30),
-                    z=anchor.z + _z,
+                    z=anchor.delta[2] + unit.delta[2],
                 ),
                 Element(
                     type="RECT",
                     rect=pg.Rect(
-                        anchor.x + unit.delta[0] - 101,
-                        anchor.y + unit.delta[1] - 101,
+                        anchor.delta[0] + unit.delta[0] - 101,
+                        anchor.delta[1] + unit.delta[1] - 101,
                         round(unit.progress * 100),
                         3,
                     ),
                     color=unit.action,
-                    z=anchor.z + _z,
+                    z=anchor.delta[2] + unit.delta[2],
                 ),
             ]
 
@@ -460,33 +460,46 @@ class Render:
             Element(
                 type="RECT",
                 rect=pg.Rect(
-                    anchor.x + _x - 30, anchor.y + _y - 30, bar_w / 100 * 32, bar_h
+                    anchor.delta[0] + unit.delta[0] - 30,
+                    anchor.delta[1] + unit.delta[1] - 30,
+                    bar_w / 100 * 32,
+                    bar_h,
                 ),
                 color=(0, 0, 0),
-                z=anchor.z + _z,
+                z=anchor.delta[2] + _z,
             ),
             Element(
                 type="RECT",
                 rect=pg.Rect(
-                    anchor.x + _x - 30 + 2,
-                    anchor.y + _y - 30 + 2,
+                    anchor.delta[0] + unit.delta[0] - 30 + 2,
+                    anchor.delta[1] + unit.delta[1] - 30 + 2,
                     ratio / 100 * 32,
                     bar_h,
                 ),
                 color=(0, 255, 0) if ratio > 50 else (255, 0, 0),
-                z=anchor.z + _z,
+                z=anchor.delta[2] + unit.delta[2],
             ),
             Element(
                 type="IMAGE",
                 obj=stats,
-                rect=(anchor.x + _x - 50, anchor.y + _y - 50, 32, 32),
-                z=anchor.z + _z,
+                rect=(
+                    anchor.delta[0] + unit.delta[0] - 50,
+                    anchor.delta[1] + unit.delta[1] - 50,
+                    32,
+                    32,
+                ),
+                z=anchor.delta[2] + unit.delta[2],
             ),
             Element(
                 type="IMAGE",
                 obj=state,
-                rect=(anchor.x + _x - 70, anchor.y + _y - 70, 32, 32),
-                z=anchor.z + _z,
+                rect=(
+                    anchor.delta[0] + unit.delta[0] - 70,
+                    anchor.delta[1] + unit.delta[1] - 70,
+                    32,
+                    32,
+                ),
+                z=anchor.delta[2] + unit.delta[2],
             ),
         ]
 
@@ -541,8 +554,8 @@ class Render:
                 Element(
                     type="ELLIPSE",
                     color=unit.color,
-                    rect=(anchor.x + _x, anchor.y + _y, 32, 32 / 2),
-                    z=anchor.z + _z,
+                    rect=(anchor.delta[0] + _x, anchor.delta[1] + _y, 32, 32 / 2),
+                    z=anchor.delta[2] + _z,
                     width=2,
                 )
             )
@@ -551,8 +564,8 @@ class Render:
             Element(
                 type="IMAGE",
                 obj=obj,
-                rect=(anchor.x + _x - 32, anchor.y + _y - 32, 32, 32),
-                z=anchor.z + _z,
+                rect=(anchor.delta[0] + _x - 32, anchor.delta[1] + _y - 32, 32, 32),
+                z=anchor.delta[2] + _z,
             )
         )
 
