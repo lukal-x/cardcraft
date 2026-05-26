@@ -63,7 +63,7 @@ def modo(unit, game):
                 "tiles",
                 list(
                     map(
-                        lambda e: (replace(e, choice=choice) if e.targetted else e),
+                        lambda e: (replace(e, choice=choice) if e.targeted else e),
                         game.tiles,
                     )
                 ),
@@ -96,7 +96,7 @@ SPELLS = {
                 "tiles",
                 list(
                     map(
-                        lambda e: replace(e, choice=game.choice) if e.targetted else e,
+                        lambda e: replace(e, choice=game.choice) if e.targeted else e,
                         game.tiles,
                     )
                 ),
@@ -112,7 +112,7 @@ SPELLS = {
                 "tiles",
                 list(
                     filter(
-                        lambda e: not e.targetted
+                        lambda e: not e.targeted
                         or (
                             game.position(*unit.delta) == e.delta
                             if unit.anchor_id == e.anchor_id
@@ -133,7 +133,7 @@ SPELLS = {
             else game.set(
                 "units",
                 game.units.transform(
-                    (next(k for k in game.units if game.units[k].targetted), "sprites"),
+                    (next(k for k in game.units if game.units[k].targeted), "sprites"),
                     models[next(game.model)],
                 ),
             )
@@ -147,7 +147,7 @@ SPELLS = {
             else game.set(
                 "units",
                 game.units.discard(
-                    next(k for k in game.units if game.units[k].targetted)
+                    next(k for k in game.units if game.units[k].targeted)
                 ),
             )
         ),
@@ -198,27 +198,11 @@ def projected(width, height, element: Element) -> Element:
 class Anchor:
     radius: int  # number of pixels in each direction
 
-    offset: Location  # position relative to its anchor, (0, 0, 0) when it is the first
-
     guid: str = datafield(default_factory=lambda: str(uuid4()))
 
-    targetted: bool = False
-    delta: Location = (0, 0, 0)  # delta from another anchor
-
+    targeted: bool = False
     enabled: bool = False
     id: int = 0  # incremental integer ID
-
-    def __getattr__(self, name: str):
-        if name == "x":
-            return self.offset[0]
-
-        if name == "y":
-            return self.offset[1]
-
-        if name == "z":
-            return self.offset[2]
-
-        raise AttributeError(name)
 
     def within(self, location: Location) -> bool:
         diameter = range(-1 * (self.radius * 2), 1 + (self.radius * 2))
@@ -242,12 +226,6 @@ class Anchors:
 
     def add(self, data: dict) -> Anchor:
         data["id"] = len(self.table) + 1
-
-        data["offset"] = data["delta"]
-
-        if data["id"] == 1:
-            data["offset"] = (0, 0, 0)
-
         self.table.append(Anchor(**data))
 
     def get(self, id: int) -> Anchor:
@@ -293,7 +271,7 @@ class Tile:
     anchor_id: int = 0  # anchor ID
 
     state: typing.Literal["idle"] = "idle"
-    targetted: bool = False
+    targeted: bool = False
     choice: tuple[int, int] = (0, 0)
 
     @classmethod
@@ -315,7 +293,7 @@ class Tile:
 
         image = sources[self.sprites.mode[self.state].key]
 
-        if self.targetted:
+        if self.targeted:
             new = image.copy()
             new.fill((50, 50, 50, 0), special_flags=pg.BLEND_RGBA_ADD)
             image = new
@@ -344,7 +322,7 @@ class Unit(PClass):
 
     client: bool = field(type=bool, initial=False)
     editor: bool = field(type=bool, initial=False)
-    targetted: bool = field(type=bool, initial=False)
+    targeted: bool = field(type=bool, initial=False)
     stepped: int = field(type=int, initial=0)
 
     delta: Location = field(type=tuple, initial=(100, 100, 0))
@@ -381,7 +359,7 @@ class Unit(PClass):
 
         x = frame[active.key]
 
-        if self.targetted:
+        if self.targeted:
             new = image.copy()
             new.fill((50, 50, 50, 0), special_flags=pg.BLEND_RGBA_ADD)
             image = new
@@ -399,16 +377,20 @@ class Render:
     """turns game elements into renderable pygame objects"""
 
     @staticmethod
-    def resources(unit: Unit) -> list[Element]:
+    def resources(player: Unit, unit: Unit) -> list[Element]:
         bar_w, bar_h = (100, 2)
 
         max_hp = unit.stamina * 3
 
         anchor = anchors.get(unit.anchor_id)
-        _x, _y, _z = unit.delta
 
         if not anchor.within(unit.delta):
             return []
+
+        edge = {"delta": (0, 0, 0)}
+        
+        if world.has_edge(player.anchor_id, unit.anchor_id):
+            edge = world.get_edge_data(player.anchor_id, unit.anchor_id)
 
         ratio = math.floor(unit.health * 100 / max_hp)
         stats = pg.font.SysFont(None, 14).render(
@@ -435,24 +417,24 @@ class Render:
                 Element(
                     type="RECT",
                     rect=pg.Rect(
-                        anchor.delta[0] + unit.delta[0] - 100,
-                        anchor.delta[1] + unit.delta[1] - 100,
+                        edge["delta"][0] + unit.delta[0] - 100,
+                        edge["delta"][1] + unit.delta[1] - 100,
                         100,
                         3,
                     ),
                     color=(30, 30, 30),
-                    z=anchor.delta[2] + unit.delta[2],
+                    z=edge["delta"][2] + unit.delta[2],
                 ),
                 Element(
                     type="RECT",
                     rect=pg.Rect(
-                        anchor.delta[0] + unit.delta[0] - 101,
-                        anchor.delta[1] + unit.delta[1] - 101,
+                        edge["delta"][0] + unit.delta[0] - 101,
+                        edge["delta"][1] + unit.delta[1] - 101,
                         round(unit.progress * 100),
                         3,
                     ),
                     color=unit.action,
-                    z=anchor.delta[2] + unit.delta[2],
+                    z=edge["delta"][2] + unit.delta[2],
                 ),
             ]
 
@@ -460,46 +442,46 @@ class Render:
             Element(
                 type="RECT",
                 rect=pg.Rect(
-                    anchor.delta[0] + unit.delta[0] - 30,
-                    anchor.delta[1] + unit.delta[1] - 30,
+                    edge["delta"][0] + unit.delta[0] - 30,
+                    edge["delta"][1] + unit.delta[1] - 30,
                     bar_w / 100 * 32,
                     bar_h,
                 ),
                 color=(0, 0, 0),
-                z=anchor.delta[2] + _z,
+                z=edge["delta"][2] + unit.delta[2],
             ),
             Element(
                 type="RECT",
                 rect=pg.Rect(
-                    anchor.delta[0] + unit.delta[0] - 30 + 2,
-                    anchor.delta[1] + unit.delta[1] - 30 + 2,
+                    edge["delta"][0] + unit.delta[0] - 30 + 2,
+                    edge["delta"][1] + unit.delta[1] - 30 + 2,
                     ratio / 100 * 32,
                     bar_h,
                 ),
                 color=(0, 255, 0) if ratio > 50 else (255, 0, 0),
-                z=anchor.delta[2] + unit.delta[2],
+                z=edge["delta"][2] + unit.delta[2],
             ),
             Element(
                 type="IMAGE",
                 obj=stats,
                 rect=(
-                    anchor.delta[0] + unit.delta[0] - 50,
-                    anchor.delta[1] + unit.delta[1] - 50,
+                    edge["delta"][0] + unit.delta[0] - 50,
+                    edge["delta"][1] + unit.delta[1] - 50,
                     32,
                     32,
                 ),
-                z=anchor.delta[2] + unit.delta[2],
+                z=edge["delta"][2] + unit.delta[2],
             ),
             Element(
                 type="IMAGE",
                 obj=state,
                 rect=(
-                    anchor.delta[0] + unit.delta[0] - 70,
-                    anchor.delta[1] + unit.delta[1] - 70,
+                    edge["delta"][0] + unit.delta[0] - 70,
+                    edge["delta"][1] + unit.delta[1] - 70,
                     32,
                     32,
                 ),
-                z=anchor.delta[2] + unit.delta[2],
+                z=edge["delta"][2] + unit.delta[2],
             ),
         ]
 
@@ -512,10 +494,8 @@ class Render:
         obj.blit(sprite, (0, 0), cut)
         obj.set_colorkey("black")
 
-        if tile.targetted:
+        if tile.targeted:
             obj.fill((30, 30, 30, 0), special_flags=pg.BLEND_RGBA_ADD)
-
-        _x, _y, _z = tile.delta
 
         visible = []
 
@@ -523,17 +503,27 @@ class Render:
         if not anchor.within(tile.delta):
             return []
 
+        edge = {"delta": (0, 0, 0)}
+
+        if world.has_edge(player.anchor_id, tile.anchor_id):
+            edge = world.get_edge_data(player.anchor_id, tile.anchor_id)
+
         return [
             Element(
                 type="IMAGE",
                 obj=obj,
-                rect=(anchor.delta[0] + _x, anchor.delta[1] + _y, 32, 32),
-                z=anchor.delta[2] + _z,
+                rect=(
+                    edge["delta"][0] + tile.delta[0],
+                    edge["delta"][1] + tile.delta[1],
+                    32,
+                    32,
+                ),
+                z=edge["delta"][2] + tile.delta[2],
             )
         ]
 
     @staticmethod
-    def unit(unit: Unit) -> list[Element]:
+    def unit(player: Unit, unit: Unit) -> list[Element]:
         obj = pg.Surface([32, 32]).convert()
 
         sprite, cut = unit.sprite()
@@ -541,21 +531,28 @@ class Render:
         obj.blit(sprite, (0, 0), cut)
         obj.set_colorkey("black")
 
-        _x, _y, _z = unit.delta
-
         visible = []
 
         anchor = anchors.get(unit.anchor_id)
         if not anchor.within(unit.delta):
             return []
 
-        if unit.targetted:
+        edge = {"delta": (0, 0, 0)}
+        if world.has_edge(player.anchor_id, unit.anchor_id):
+            edge = world.get_edge_data(player.anchor_id, unit.anchor_id)
+
+        if unit.targeted:
             visible.append(
                 Element(
                     type="ELLIPSE",
                     color=unit.color,
-                    rect=(anchor.delta[0] + _x, anchor.delta[1] + _y, 32, 32 / 2),
-                    z=anchor.delta[2] + _z,
+                    rect=(
+                        edge["delta"][0] + unit.delta[0],
+                        edge["delta"][1] + unit.delta[1],
+                        32,
+                        32 / 2,
+                    ),
+                    z=edge["delta"][2] + unit.delta[2],
                     width=2,
                 )
             )
@@ -564,21 +561,31 @@ class Render:
             Element(
                 type="IMAGE",
                 obj=obj,
-                rect=(anchor.delta[0] + _x - 32, anchor.delta[1] + _y - 32, 32, 32),
-                z=anchor.delta[2] + _z,
+                rect=(
+                    edge["delta"][0] + unit.delta[0] - 32,
+                    edge["delta"][1] + unit.delta[1] - 32,
+                    32,
+                    32,
+                ),
+                z=edge["delta"][2] + unit.delta[2],
             )
         )
 
         return visible
 
     @staticmethod
-    def anchor(anchor: Anchor) -> list[Element]:
+    def anchor(player: Unit, anchor: Anchor) -> list[Element]:
+        edge = {"delta": (0, 0, 0)}
+
+        if world.has_edge(player.anchor_id, anchor.id):
+            edge = world.get_edge_data(player.anchor_id, anchor.id)
+
         return [
             Element(
                 type="ELLIPSE",
                 color="pink",
-                rect=(anchor.delta[0], anchor.delta[1], 32, 32 / 2),
-                z=anchor.delta[2],
+                rect=(edge["delta"][0], edge["delta"][1], 32, 32 / 2),
+                z=edge["delta"][2],
                 width=2,
             )
         ]
@@ -625,7 +632,7 @@ class Game(PClass):
                 project,
                 itertools.chain(
                     *map(
-                        Render.unit,
+                        functools.partial(Render.unit, player),
                         itertools.chain(self.units.values(), self.others.values()),
                     )
                 ),
@@ -634,7 +641,7 @@ class Game(PClass):
                 project,
                 itertools.chain(
                     *map(
-                        Render.resources,
+                        functools.partial(Render.resources, player),
                         itertools.chain(self.units.values(), self.others.values()),
                     )
                 ),
@@ -642,7 +649,10 @@ class Game(PClass):
             *map(
                 project,
                 itertools.chain(
-                    *map(Render.anchor, filter(lambda e: e.targetted, anchors.table))
+                    *map(
+                        functools.partial(Render.anchor, player),
+                        filter(lambda e: e.targeted, anchors.table),
+                    )
                 ),
             ),
         ]
@@ -652,27 +662,25 @@ class Game(PClass):
             target = next(self.cycle)
 
             for a_idx, anchor in enumerate(anchors.table):
-                anchors.table[a_idx].targetted = anchor.guid == target
+                anchors.table[a_idx].targeted = anchor.guid == target
 
             return (
                 self.set(
                     "tiles",
                     list(
-                        map(
-                            lambda e: replace(e, targetted=e.guid == target), self.tiles
-                        )
+                        map(lambda e: replace(e, targeted=e.guid == target), self.tiles)
                     ),
                 )
                 .set(
                     "units",
                     self.units.transform(
-                        [ny], lambda e: e.set("targetted", e.guid == target)
+                        [ny], lambda e: e.set("targeted", e.guid == target)
                     ),
                 )
                 .set(
                     "others",
                     {
-                        k: v.set("targetted", v.guid == target)
+                        k: v.set("targeted", v.guid == target)
                         for k, v in self.others.items()
                     },
                 )
@@ -681,7 +689,7 @@ class Game(PClass):
         if keys[pg.K_s] and keys[pg.K_LCTRL]:
             with open("universe.json", "w+") as f:
                 f.write(json.dumps(list(map(asdict, self.tiles))))
-                time.self(3)
+                time.sleep(3)
 
         if not pg.mouse.get_focused():
             return self
@@ -734,9 +742,9 @@ class Game(PClass):
         candidate = min(
             filter(
                 lambda e: (
-                    ((unit.delta[0] < 0) == ((e[2]["delta"][0] - old.delta[0]) < 0))
-                    and ((unit.delta[1] < 0) == ((e[2]["delta"][1] - old.delta[1]) < 0))
-                    and ((unit.delta[2] < 0) == ((e[2]["delta"][2] - old.delta[2]) < 0))
+                    ((unit.delta[0] < 0) == ((e[2]["delta"][0]) < 0))
+                    and ((unit.delta[1] < 0) == ((e[2]["delta"][1]) < 0))
+                    and ((unit.delta[2] < 0) == ((e[2]["delta"][2]) < 0))
                 ),
                 world.edges(unit.anchor_id, data=True),
             ),
@@ -753,11 +761,11 @@ class Game(PClass):
         target: Anchor | Unit | None = self.units[self.controlled[0]]
 
         if unit.editor and any(filter(lambda e: e.name == "mover", unit.effects)):
-            target = next(filter(operator.attrgetter("targetted"), anchors.table), None)
+            target = next(filter(operator.attrgetter("targeted"), anchors.table), None)
 
             if target is None:
                 target = next(
-                    filter(operator.attrgetter("targetted"), self.units.values()), None
+                    filter(operator.attrgetter("targeted"), self.units.values()), None
                 )
 
         if isinstance(target, Unit):
@@ -800,21 +808,31 @@ class Game(PClass):
 
         if isinstance(target, Anchor):
             idx = anchors.table.index(target)
-            x, y, z = target.delta
+            u, v, data = min(list(world.edges(target.id, data=True)), key=lambda e: abs(e[2]["weight"]))
+
+            x, y, z = data["delta"]
+            
+            old = new = data["delta"]
+
             if keys[pg.K_w]:
-                target.delta = (x, y - 32, z)
+                new = (x, y + 32, z)
             if keys[pg.K_s]:
-                target.delta = (x, y + 32, z)
+                new = (x, y - 32, z)
             if keys[pg.K_a]:
-                target.delta = (x - 32, y, z)
+                new = (x + 32, y, z)
             if keys[pg.K_d]:
-                target.delta = (x + 32, y, z)
+                new = (x - 32, y, z)
 
-            u, v, data = list(world.edges(target.id, data=True))[0]
-            # data["delta"] = target.delta
-            data["weight"] = math.dist(anchors.get(u).delta, anchors.get(v).delta)
+            a = data.copy()
+            a["delta"] = new
+            a["weight"] = math.dist((0, 0, 0), a["delta"])
 
-            world.add_edge(u, v, **data)
+            b = data.copy()
+            b["delta"] = tuple(-1 * e for e in new)
+            b["weight"] = math.dist((0, 0, 0), b["delta"])
+
+            world.add_edge(u, v, **a)
+            world.add_edge(v, u, **b)
             return self
 
         return self
@@ -881,7 +899,7 @@ class Game(PClass):
     def act(self, act: list[str]) -> tuple[list[str], "Game"]:
         game = self
         target = next(
-            filter(operator.attrgetter("targetted"), self.units.values()), None
+            filter(operator.attrgetter("targeted"), self.units.values()), None
         )
         target = target or self.units[self.controlled[0]]
 
@@ -960,7 +978,7 @@ class Game(PClass):
             health=20,
             stamina=10,
             sprites=models[self.character],
-            targetted=False,
+            targeted=False,
             o="S",
             anchor_id=unit.anchor_id,
         )
@@ -995,7 +1013,6 @@ if __name__ == "__main__":
     anchors.add(
         dict(
             radius=32,
-            delta=(0, 0, 0),
             enabled=True,
         )
     )
@@ -1003,7 +1020,6 @@ if __name__ == "__main__":
     anchors.add(
         dict(
             radius=32,
-            delta=(32 * 7, 0, 0),
             enabled=True,
         )
     )
@@ -1011,40 +1027,37 @@ if __name__ == "__main__":
     anchors.add(
         dict(
             radius=32,
-            delta=(-32, 32 * 10, 0),
             enabled=True,
         )
     )
 
     world = nx.DiGraph()
-
-    delta = (255, 0, 0)
     world.add_edge(
         1,
         2,
-        delta=anchors.get(2).delta,
-        weight=math.dist((0, 0, 0), anchors.get(2).delta),
+        delta=(7 * 32, 0, 0),
+        weight=math.dist((0, 0, 0), (7 * 32, 0, 0)),
     )
 
     world.add_edge(
         2,
         1,
-        delta=tuple(-1 * e for e in anchors.get(2).delta),
-        weight=math.dist((0, 0, 0), (-1 * e for e in anchors.get(2).delta)),
+        delta=(-7 * 32, 0, 0),
+        weight=math.dist((0, 0, 0), (-7 * 32, 0, 0)),
     )
 
     world.add_edge(
         1,
         3,
-        delta=anchors.get(3).delta,
-        weight=math.dist((0, 0, 0), anchors.get(3).delta),
+        delta=(-32, 10 * 32, 0),
+        weight=math.dist((0, 0, 0), (-32, 10 * 32, 0)),
     )
 
     world.add_edge(
         3,
         1,
-        delta=tuple(-1 * e for e in anchors.get(3).delta),
-        weight=math.dist((0, 0, 0), (-1 * e for e in anchors.get(3).delta)),
+        delta=(32, -10 * 32, 0),
+        weight=math.dist((0, 0, 0), (32, -10 * 32, 0)),
     )
 
     if False:
