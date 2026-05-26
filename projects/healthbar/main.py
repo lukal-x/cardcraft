@@ -388,7 +388,7 @@ class Render:
             return []
 
         edge = {"delta": (0, 0, 0)}
-        
+
         if world.has_edge(player.anchor_id, unit.anchor_id):
             edge = world.get_edge_data(player.anchor_id, unit.anchor_id)
 
@@ -806,12 +806,18 @@ class Game(PClass):
 
             return self.transform(("units", runner.guid), lambda e: runner)
 
-        if isinstance(target, Anchor):
+        if (
+            isinstance(target, Anchor)
+            and target.id != self.units[self.controlled[0]].anchor_id
+        ):
             idx = anchors.table.index(target)
-            u, v, data = min(list(world.edges(target.id, data=True)), key=lambda e: abs(e[2]["weight"]))
+            u, v, data = min(
+                list(world.edges(target.id, data=True)),
+                key=lambda e: abs(e[2]["weight"]),
+            )
 
             x, y, z = data["delta"]
-            
+
             old = new = data["delta"]
 
             if keys[pg.K_w]:
