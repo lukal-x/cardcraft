@@ -284,8 +284,8 @@ class Tile:
             )
         )
 
-    def relative(self, startpoint: Location, change: Location) -> Location:
-        return tuple(a - b + c for a, b, c in zip(startpoint, change, self.delta))
+    def relative(self, to: Location) -> Location:
+        return tuple(a - b for a, b in zip(self.delta, to))
 
     def sprite(self):
         x, y = self.choice
@@ -315,6 +315,7 @@ class Unit(PClass):
     action: tuple[int, int, int] = field(type=tuple, initial=(100, 100, 150))
 
     anchor_id: int = field(factory=lambda v: v or 0)  # anchor ID
+    overlaps: list[int] = field(factory=lambda v: v or [])
 
     state: typing.Literal["idle", "run", "cast", "block", "dance"] = field(
         type=str, initial="idle"
@@ -342,8 +343,8 @@ class Unit(PClass):
             )
         )
 
-    def relative(self, startpoint: Location, change: Location) -> Location:
-        return tuple(a - b + c for a, b, c in zip(startpoint, change, self.delta))
+    def relative(self, to: Location) -> Location:
+        return tuple(a - b for a, b in zip(self.delta, to))
 
     def sprite(self):
         _ = ["S", "E", "W", "N"]
@@ -657,7 +658,7 @@ class Game(PClass):
             ),
         ]
 
-    def controls(self, keys: dict[int, bool], mx: int, my: int) -> "Game":
+    def controls(self, keys: dict[int, bool], mx: int, my: int, clicks: dict) -> "Game":
         if keys[pg.K_TAB]:
             target = next(self.cycle)
 
@@ -694,6 +695,9 @@ class Game(PClass):
         if not pg.mouse.get_focused():
             return self
 
+        if not self.running:
+            return self
+
         padding = screen.width // 12
 
         if mx <= padding:
@@ -708,6 +712,12 @@ class Game(PClass):
         if my >= screen.height - padding:
             camera.y -= 10
 
+        if clicks[2]:
+            camera.x, camera.y = iso(
+                -1 * self.units[self.controlled[0]].delta[0],
+                -1 * self.units[self.controlled[0]].delta[1],
+            )
+
         return self
 
     def anchoring(self) -> "Game":
@@ -718,19 +728,31 @@ class Game(PClass):
             return self
 
         _, ref_id, edge = candidate
-        pos = unit.relative((0, 0, 0), edge["delta"])
+        pos = unit.relative(edge["delta"])
         new = anchors.get(ref_id)
+        old = anchors.get(unit.anchor_id)
+
+        if old.within(unit.delta):
+            return self.transform(
+                ("units", unit.guid), lambda e: e.set("overlaps", e.overlaps if new.id in e.overlaps else e.overlaps + [new.id])
+            )
 
         if not new.within(pos):
-            return self
+            return self.transform(
+                ("units", unit.guid),
+                lambda e: e.set(
+                    "overlaps",
+                    list(filter(functools.partial(operator.ne, new.id), e.overlaps)),
+                ),
+            )
 
         return self.transform(
             ("units", unit.guid),
             lambda e: e.set("anchor_id", new.id).set("delta", pos),
         )
 
-    def accessible(self, unit: Unit, relevant: list[Location]) -> bool:
-        return self.position(*unit.delta) in relevant
+    def accessible(self, location: Location, relevant: list[Location]) -> bool:
+        return self.position(*location) in relevant
 
     def facing(self, unit: Unit) -> tuple[int, int, dict]:
         """which anchor is the unit facing
@@ -810,12 +832,14 @@ class Game(PClass):
             isinstance(target, Anchor)
             and target.id != self.units[self.controlled[0]].anchor_id
         ):
+            if not any([keys[k] for k in [pg.K_w, pg.K_s, pg.K_a, pg.K_d]]):
+                return self
+
             idx = anchors.table.index(target)
             u, v, data = min(
                 list(world.edges(target.id, data=True)),
                 key=lambda e: abs(e[2]["weight"]),
             )
-
             x, y, z = data["delta"]
 
             old = new = data["delta"]
@@ -839,7 +863,32 @@ class Game(PClass):
 
             world.add_edge(u, v, **a)
             world.add_edge(v, u, **b)
-            return self
+
+            for e in world.edges(v, data=True):
+                u1, v1, secondary = e
+                if u1 != v:
+                    continue
+
+                if u == v1:
+                    continue
+
+                one, other = (u, v1)
+                relation = v
+
+                first, second = (
+                    world[one][relation]["delta"],
+                    world[other][relation]["delta"],
+                )
+
+                delta = tuple(a - b for a, b in zip(first, second))
+                weight = math.dist((0, 0, 0), delta)
+                world.add_edge(one, other, weight=weight, delta=delta)
+
+                delta = tuple(-1 * e for e in delta)
+                weight = math.dist((0, 0, 0), delta)
+                world.add_edge(other, one, weight=weight, delta=delta)
+
+                return self
 
         return self
 
@@ -1235,6 +1284,7 @@ if __name__ == "__main__":
             stamina=50,
             color="blue",
             anchor_id=1,
+            overlaps=[],
         )
 
         if sys.argv[1] == "b":
@@ -1247,6 +1297,7 @@ if __name__ == "__main__":
                 stamina=50,
                 color="blue",
                 anchor_id=1,
+                overlaps=[],
             )
 
         npc1 = Unit(
@@ -1258,6 +1309,7 @@ if __name__ == "__main__":
             stamina=50,
             color="blue",
             anchor_id=2,
+            overlaps=[],
         )
 
         g = g.set("units", g.units.set(p1.guid, p1).set(npc1.guid, npc1))
@@ -1341,11 +1393,13 @@ if __name__ == "__main__":
 
             g = g.anchoring()
 
-            relevant = lambda to, e: e.anchor_id == to
-            is_relevant = functools.partial(relevant, g.units[guid].anchor_id)
+            relevant = lambda presence, e: e.anchor_id in presence
+            is_relevant = functools.partial(
+                relevant, [g.units[guid].anchor_id]
+            )
 
             legal: bool = g.accessible(
-                g.units[guid],
+                g.units[guid].delta,
                 map(
                     operator.attrgetter("delta"),
                     filter(is_relevant, g.tiles),
@@ -1356,15 +1410,12 @@ if __name__ == "__main__":
             if candidate is not None:
                 one, other, edge = candidate
 
-                is_relevant = functools.partial(relevant, other)
+                is_relevant = functools.partial(relevant, [other])
 
                 possible = g.accessible(
-                    g.units[guid].set(
-                        "delta", g.units[guid].relative((0, 0, 0), edge["delta"])
-                    ),
+                    g.units[guid].relative(edge["delta"]),
                     map(operator.attrgetter("delta"), filter(is_relevant, g.tiles)),
                 )
-
                 legal = legal or possible
 
             if not legal:
@@ -1378,7 +1429,7 @@ if __name__ == "__main__":
                     e
                     for e in g.tiles
                     if e.anchor_id == g.units[guid].anchor_id
-                    and g.accessible(g.units[guid], [e.delta])
+                    and g.accessible(g.units[guid].delta, [e.delta])
                 ]
 
             targets = tuple(
@@ -1395,7 +1446,9 @@ if __name__ == "__main__":
             if g.targets != targets:
                 g = g.set("targets", targets).set("cycle", itertools.cycle(targets))
 
-            g = g.controls(pg.key.get_pressed(), *pg.mouse.get_pos())
+            g = g.controls(
+                pg.key.get_pressed(), *pg.mouse.get_pos(), pg.mouse.get_pressed()
+            )
             g = g.effects()
 
         if pg.time.get_ticks() % 2000:
