@@ -6,7 +6,9 @@ from dataclasses import (
     fields as datafields,
     replace,
 )
+from datetime import datetime
 from fractions import Fraction
+from os.path import exists, join
 from types import SimpleNamespace as NS
 from uuid import uuid4
 import functools
@@ -26,6 +28,7 @@ import typing
 
 
 from matplotlib import pyplot
+from PIL import Image
 from pyrsistent import PClass, PMap, PVector, field, m, ny, v
 import networkx as nx
 import pygame as pg
@@ -289,7 +292,7 @@ class Tile:
 
     def sprite(self):
         x, y = self.choice
-        cut: tuple[int, int, int, int] = x * 32, y * 32, 32, 32
+        cut: tuple[int, int, int, int] = (x - 1) * 32, (y - 1) * 32, 32, 32
 
         image = sources[self.sprites.mode[self.state].key]
 
@@ -502,7 +505,7 @@ class Render:
 
         anchor = anchors.get(tile.anchor_id)
         if not anchor.within(tile.delta):
-            return []
+            obj.set_alpha(128)
 
         edge = {"delta": (0, 0, 0)}
 
@@ -536,7 +539,7 @@ class Render:
 
         anchor = anchors.get(unit.anchor_id)
         if not anchor.within(unit.delta):
-            return []
+            obj.set_alpha(128)
 
         edge = {"delta": (0, 0, 0)}
         if world.has_edge(player.anchor_id, unit.anchor_id):
@@ -687,10 +690,26 @@ class Game(PClass):
                 )
             )
 
-        if keys[pg.K_s] and keys[pg.K_LCTRL]:
-            with open("universe.json", "w+") as f:
-                f.write(json.dumps(list(map(asdict, self.tiles))))
-                time.sleep(3)
+        if self.units[self.controlled[0]].editor and keys[pg.K_s] and keys[pg.K_LCTRL]:
+            images = {}
+            Image.new("RGBA", (10, 10))
+
+            for e in self.tiles:
+                path = join("world", str(e.anchor_id), "tilemap.png")
+                if path not in images:
+                    images[path] = Image.new("RGBA", (10, 10))
+
+                color = COLORMAP_R.tile.get(e.choice, None)
+                x, y, z = e.delta
+                if color is None:
+                    continue
+
+                images[path].putpixel((x // 32, y // 32), color)
+
+            for path, img in images.items():
+                img.save(path)
+
+            time.sleep(3)
 
         if not pg.mouse.get_focused():
             return self
@@ -734,7 +753,11 @@ class Game(PClass):
 
         if old.within(unit.delta):
             return self.transform(
-                ("units", unit.guid), lambda e: e.set("overlaps", e.overlaps if new.id in e.overlaps else e.overlaps + [new.id])
+                ("units", unit.guid),
+                lambda e: e.set(
+                    "overlaps",
+                    e.overlaps if new.id in e.overlaps else e.overlaps + [new.id],
+                ),
             )
 
         if not new.within(pos):
@@ -1090,15 +1113,15 @@ if __name__ == "__main__":
     world.add_edge(
         1,
         2,
-        delta=(7 * 32, 0, 0),
-        weight=math.dist((0, 0, 0), (7 * 32, 0, 0)),
+        delta=(10 * 32, 0, 0),
+        weight=math.dist((0, 0, 0), (10 * 32, 0, 0)),
     )
 
     world.add_edge(
         2,
         1,
-        delta=(-7 * 32, 0, 0),
-        weight=math.dist((0, 0, 0), (-7 * 32, 0, 0)),
+        delta=(-10 * 32, 0, 0),
+        weight=math.dist((0, 0, 0), (10 * 32, 0, 0)),
     )
 
     world.add_edge(
@@ -1240,15 +1263,82 @@ if __name__ == "__main__":
     ]:
         models[model] = sprite_model(model, dimensions, sheets)
 
-    with open("universe.json", "r") as f:
-        tiles = []
-        units = m()
-        for e in json.loads(f.read()):
-            if "client" in e:
-                units = units.set(e["guid"], Unit.fromdict(e))
-                continue
+    COLORMAP = NS(
+        tile={
+            (0, 255, 0): (1, 3),  # green
+            (128, 64, 0): (4, 1),  # brown
+            (128, 128, 128): (9, 6),  # gray
+            (0, 0, 255): (12, 1),  # blue
+        },
+        entity={(255, 0, 0): models["wolf"]},
+    )
 
-            tiles.append(Tile.fromdict(e))
+    COLORMAP_R = NS(
+        tile={t: c for c, t in COLORMAP.tile.items()},
+        # entity={e: c for c, e in COLORMAP.entity.items()}
+    )
+
+    tiles = []
+    units = m()
+
+    for e in anchors.table:
+        path = join("world", str(e.id))
+        meta = join(path, "meta.json")
+
+        tilemap = join(path, "tilemap.png")
+        heightmap = join(path, "heightmap.png")
+        entitymap = join(path, "entitymap.png")
+
+        if not exists(meta):
+            continue
+
+        with open(meta, "r") as f:
+            w, h = tuple(json.loads(f.read()))
+
+        if exists(tilemap):
+            img = Image.open(tilemap).convert("RGBA")
+            for y in range(h):
+                for x in range(w):
+                    r, g, b, a = img.getpixel((x, y))
+                    if a < 255:
+                        continue
+
+                    choice = COLORMAP.tile.get((r, g, b), None)
+                    if choice is None:
+                        continue
+
+                    tiles.append(
+                        Tile(
+                            delta=(32 * x, 32 * y, 0),
+                            choice=choice,
+                            sprites=models["ground"],
+                            anchor_id=e.id,
+                        )
+                    )
+
+        if exists(entitymap):
+            img = Image.open(entitymap).convert("RGBA")
+            for y in range(h):
+                for x in range(w):
+                    r, g, b, a = img.getpixel((x, y))
+                    if a < 255:
+                        continue
+
+                    char = COLORMAP.entity.get((r, g, b), None)
+                    if char is None:
+                        continue
+
+                    units = units.set(
+                        str(uuid4()),
+                        Unit(
+                            delta=(32 * x, 32 * y, 0),
+                            sprites=char,
+                            anchor_id=e.id,
+                            stamina=123,
+                            health=500,
+                            name="asdf",
+                        ),
+                    )
 
     g = Game(
         option=itertools.cycle(
@@ -1262,6 +1352,7 @@ if __name__ == "__main__":
         model=itertools.cycle(["stag", "boar", "wolf"]),
         ticks=pg.time.get_ticks(),
         splash=True,
+        night=(datetime.now().hour not in range(6, 18 + 1)),
         events=deque([]),
         running=True,
         targets=tuple(),
@@ -1272,34 +1363,34 @@ if __name__ == "__main__":
         controlled=[],
     )
 
-    if not g.units:
+    p1 = Unit(
+        name="stag",
+        sprites=models["stag"],
+        client=True,
+        delta=(0, 0, 0),
+        o="N",
+        state="idle",
+        health=90,
+        stamina=50,
+        color="blue",
+        anchor_id=1,
+        overlaps=[],
+    )
+
+    if sys.argv[1] == "b":
         p1 = Unit(
-            name="stag",
-            sprites=models["stag"],
+            name="boar",
+            sprites=models["boar"],
             client=True,
-            delta=(0, 0, 0),
-            o="N",
-            state="idle",
-            health=90,
+            delta=(32, 0, 0),
+            health=40,
             stamina=50,
             color="blue",
             anchor_id=1,
             overlaps=[],
         )
 
-        if sys.argv[1] == "b":
-            p1 = Unit(
-                name="boar",
-                sprites=models["boar"],
-                client=True,
-                delta=(32, 0, 0),
-                health=40,
-                stamina=50,
-                color="blue",
-                anchor_id=1,
-                overlaps=[],
-            )
-
+    if not g.units:
         npc1 = Unit(
             name="wolf",
             sprites=models["wolf"],
@@ -1312,7 +1403,9 @@ if __name__ == "__main__":
             overlaps=[],
         )
 
-        g = g.set("units", g.units.set(p1.guid, p1).set(npc1.guid, npc1))
+        g = g.set("units", g.units.set(npc1.guid, npc1))
+
+    g = g.set("units", g.units.set(p1.guid, p1))
 
     if not g.tiles:
         t1 = Tile(delta=(0, 0, 0), sprites=models["ground"], anchor_id=1)
@@ -1394,9 +1487,7 @@ if __name__ == "__main__":
             g = g.anchoring()
 
             relevant = lambda presence, e: e.anchor_id in presence
-            is_relevant = functools.partial(
-                relevant, [g.units[guid].anchor_id]
-            )
+            is_relevant = functools.partial(relevant, [g.units[guid].anchor_id])
 
             legal: bool = g.accessible(
                 g.units[guid].delta,
