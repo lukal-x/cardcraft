@@ -89,6 +89,7 @@ SPELLS = {
             )
         ),
     ),
+    "atarashi tochi": lambda unit, game: (unit, game if not unit.editor else game),
     "saibai": modo,
     "henshin": lambda unit, game: (
         unit,
@@ -222,10 +223,11 @@ class Anchors:
     """manager class for anchor objects, it mimicks a DB storage"""
 
     table: list[Anchor]  # Anchor.id must be equivalent to index+1
-
+    world: nx.DiGraph
+    
     @classmethod
     def create(cls):
-        return Anchors(table=[])
+        return Anchors(table=[], world=nx.DiGraph())
 
     def add(self, data: dict) -> Anchor:
         data["id"] = len(self.table) + 1
@@ -393,8 +395,8 @@ class Render:
 
         edge = {"delta": (0, 0, 0)}
 
-        if world.has_edge(player.anchor_id, unit.anchor_id):
-            edge = world.get_edge_data(player.anchor_id, unit.anchor_id)
+        if anchors.world.has_edge(player.anchor_id, unit.anchor_id):
+            edge = anchors.world.get_edge_data(player.anchor_id, unit.anchor_id)
 
         ratio = math.floor(unit.health * 100 / max_hp)
         stats = pg.font.SysFont(None, 14).render(
@@ -509,8 +511,8 @@ class Render:
 
         edge = {"delta": (0, 0, 0)}
 
-        if world.has_edge(player.anchor_id, tile.anchor_id):
-            edge = world.get_edge_data(player.anchor_id, tile.anchor_id)
+        if anchors.world.has_edge(player.anchor_id, tile.anchor_id):
+            edge = anchors.world.get_edge_data(player.anchor_id, tile.anchor_id)
 
         return [
             Element(
@@ -542,8 +544,8 @@ class Render:
             obj.set_alpha(128)
 
         edge = {"delta": (0, 0, 0)}
-        if world.has_edge(player.anchor_id, unit.anchor_id):
-            edge = world.get_edge_data(player.anchor_id, unit.anchor_id)
+        if anchors.world.has_edge(player.anchor_id, unit.anchor_id):
+            edge = anchors.world.get_edge_data(player.anchor_id, unit.anchor_id)
 
         if unit.targeted:
             visible.append(
@@ -581,8 +583,8 @@ class Render:
     def anchor(player: Unit, anchor: Anchor) -> list[Element]:
         edge = {"delta": (0, 0, 0)}
 
-        if world.has_edge(player.anchor_id, anchor.id):
-            edge = world.get_edge_data(player.anchor_id, anchor.id)
+        if anchors.world.has_edge(player.anchor_id, anchor.id):
+            edge = anchors.world.get_edge_data(player.anchor_id, anchor.id)
 
         return [
             Element(
@@ -791,7 +793,7 @@ class Game(PClass):
                     and ((unit.delta[1] < 0) == ((e[2]["delta"][1]) < 0))
                     and ((unit.delta[2] < 0) == ((e[2]["delta"][2]) < 0))
                 ),
-                world.edges(unit.anchor_id, data=True),
+                anchors.world.edges(unit.anchor_id, data=True),
             ),
             key=lambda e: abs(e[2]["weight"]),
             default=None,
@@ -860,7 +862,7 @@ class Game(PClass):
 
             idx = anchors.table.index(target)
             u, v, data = min(
-                list(world.edges(target.id, data=True)),
+                list(anchors.world.edges(target.id, data=True)),
                 key=lambda e: abs(e[2]["weight"]),
             )
             x, y, z = data["delta"]
@@ -884,10 +886,10 @@ class Game(PClass):
             b["delta"] = tuple(-1 * e for e in new)
             b["weight"] = math.dist((0, 0, 0), b["delta"])
 
-            world.add_edge(u, v, **a)
-            world.add_edge(v, u, **b)
+            anchors.world.add_edge(u, v, **a)
+            anchors.world.add_edge(v, u, **b)
 
-            for e in world.edges(v, data=True):
+            for e in anchors.world.edges(v, data=True):
                 u1, v1, secondary = e
                 if u1 != v:
                     continue
@@ -905,11 +907,11 @@ class Game(PClass):
 
                 delta = tuple(a - b for a, b in zip(first, second))
                 weight = math.dist((0, 0, 0), delta)
-                world.add_edge(one, other, weight=weight, delta=delta)
+                anchors.world.add_edge(one, other, weight=weight, delta=delta)
 
                 delta = tuple(-1 * e for e in delta)
                 weight = math.dist((0, 0, 0), delta)
-                world.add_edge(other, one, weight=weight, delta=delta)
+                anchors.world.add_edge(other, one, weight=weight, delta=delta)
 
                 return self
 
@@ -1109,29 +1111,28 @@ if __name__ == "__main__":
         )
     )
 
-    world = nx.DiGraph()
-    world.add_edge(
+    anchors.world.add_edge(
         1,
         2,
         delta=(10 * 32, 0, 0),
         weight=math.dist((0, 0, 0), (10 * 32, 0, 0)),
     )
 
-    world.add_edge(
+    anchors.world.add_edge(
         2,
         1,
         delta=(-10 * 32, 0, 0),
         weight=math.dist((0, 0, 0), (10 * 32, 0, 0)),
     )
 
-    world.add_edge(
+    anchors.world.add_edge(
         1,
         3,
         delta=(-32, 10 * 32, 0),
         weight=math.dist((0, 0, 0), (-32, 10 * 32, 0)),
     )
 
-    world.add_edge(
+    anchors.world.add_edge(
         3,
         1,
         delta=(32, -10 * 32, 0),
