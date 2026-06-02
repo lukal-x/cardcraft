@@ -89,7 +89,14 @@ SPELLS = {
             )
         ),
     ),
-    "atarashi tochi": lambda unit, game: (unit, game if not unit.editor else game),
+    "atarashi tochi": lambda unit, game: (
+        unit,
+        (
+            game
+            if not unit.editor
+            else game.set("anchors", game.anchors + game.make_anchor(unit))
+        ),
+    ),
     "saibai": modo,
     "henshin": lambda unit, game: (
         unit,
@@ -216,25 +223,6 @@ class Anchor:
                 return False
 
         return True
-
-
-@dataclass
-class Anchors:
-    """manager class for anchor objects, it mimicks a DB storage"""
-
-    table: list[Anchor]  # Anchor.id must be equivalent to index+1
-    world: nx.DiGraph
-    
-    @classmethod
-    def create(cls):
-        return Anchors(table=[], world=nx.DiGraph())
-
-    def add(self, data: dict) -> Anchor:
-        data["id"] = len(self.table) + 1
-        self.table.append(Anchor(**data))
-
-    def get(self, id: int) -> Anchor:
-        return self.table[id - 1]
 
 
 class Effect(PClass):
@@ -383,20 +371,20 @@ class Render:
     """turns game elements into renderable pygame objects"""
 
     @staticmethod
-    def resources(player: Unit, unit: Unit) -> list[Element]:
+    def resources(game: "Game", player: Unit, unit: Unit) -> list[Element]:
         bar_w, bar_h = (100, 2)
 
         max_hp = unit.stamina * 3
 
-        anchor = anchors.get(unit.anchor_id)
+        anchor = game.get_anchor(unit.anchor_id)
 
         if not anchor.within(unit.delta):
             return []
 
         edge = {"delta": (0, 0, 0)}
 
-        if anchors.world.has_edge(player.anchor_id, unit.anchor_id):
-            edge = anchors.world.get_edge_data(player.anchor_id, unit.anchor_id)
+        if game.world.has_edge(player.anchor_id, unit.anchor_id):
+            edge = game.world.get_edge_data(player.anchor_id, unit.anchor_id)
 
         ratio = math.floor(unit.health * 100 / max_hp)
         stats = pg.font.SysFont(None, 14).render(
@@ -492,7 +480,7 @@ class Render:
         ]
 
     @staticmethod
-    def tile(player: Unit, tile: Tile) -> list[Element]:
+    def tile(game: "Game", player: Unit, tile: Tile) -> list[Element]:
         sprite, cut = tile.sprite()
 
         obj = pg.Surface([32, 32], pg.SRCALPHA)
@@ -505,14 +493,14 @@ class Render:
 
         visible = []
 
-        anchor = anchors.get(tile.anchor_id)
+        anchor = game.get_anchor(tile.anchor_id)
         if not anchor.within(tile.delta):
             obj.set_alpha(128)
 
         edge = {"delta": (0, 0, 0)}
 
-        if anchors.world.has_edge(player.anchor_id, tile.anchor_id):
-            edge = anchors.world.get_edge_data(player.anchor_id, tile.anchor_id)
+        if game.world.has_edge(player.anchor_id, tile.anchor_id):
+            edge = game.world.get_edge_data(player.anchor_id, tile.anchor_id)
 
         return [
             Element(
@@ -529,7 +517,7 @@ class Render:
         ]
 
     @staticmethod
-    def unit(player: Unit, unit: Unit) -> list[Element]:
+    def unit(game: "Game", player: Unit, unit: Unit) -> list[Element]:
         obj = pg.Surface([32, 32]).convert()
 
         sprite, cut = unit.sprite()
@@ -539,13 +527,13 @@ class Render:
 
         visible = []
 
-        anchor = anchors.get(unit.anchor_id)
+        anchor = game.get_anchor(unit.anchor_id)
         if not anchor.within(unit.delta):
             obj.set_alpha(128)
 
         edge = {"delta": (0, 0, 0)}
-        if anchors.world.has_edge(player.anchor_id, unit.anchor_id):
-            edge = anchors.world.get_edge_data(player.anchor_id, unit.anchor_id)
+        if game.world.has_edge(player.anchor_id, unit.anchor_id):
+            edge = game.world.get_edge_data(player.anchor_id, unit.anchor_id)
 
         if unit.targeted:
             visible.append(
@@ -580,11 +568,11 @@ class Render:
         return visible
 
     @staticmethod
-    def anchor(player: Unit, anchor: Anchor) -> list[Element]:
+    def anchor(game: "Game", player: Unit, anchor: Anchor) -> list[Element]:
         edge = {"delta": (0, 0, 0)}
 
-        if anchors.world.has_edge(player.anchor_id, anchor.id):
-            edge = anchors.world.get_edge_data(player.anchor_id, anchor.id)
+        if game.world.has_edge(player.anchor_id, anchor.id):
+            edge = game.world.get_edge_data(player.anchor_id, anchor.id)
 
         return [
             Element(
@@ -606,9 +594,12 @@ class Game(PClass):
     events: deque = field()
     running: bool = field()
 
+    anchors: PVector[Anchor] = field()
     tiles: list[Tile] = field()
     others: dict[str, [Unit]] = field()  # easier to keep a separate list
     units: PMap[str, PVector[Unit]] = field(type=PMap)
+    world: nx.DiGraph = field()
+
     controlled: list[int] = field()  # index of unit
 
     cycle = field()  # the cycle
@@ -629,7 +620,7 @@ class Game(PClass):
                 project,
                 itertools.chain(
                     *map(
-                        functools.partial(Render.tile, player),
+                        functools.partial(Render.tile, self, player),
                         sorted(self.tiles, key=lambda e: e.delta),
                     )
                 ),
@@ -638,7 +629,7 @@ class Game(PClass):
                 project,
                 itertools.chain(
                     *map(
-                        functools.partial(Render.unit, player),
+                        functools.partial(Render.unit, self, player),
                         itertools.chain(self.units.values(), self.others.values()),
                     )
                 ),
@@ -647,7 +638,7 @@ class Game(PClass):
                 project,
                 itertools.chain(
                     *map(
-                        functools.partial(Render.resources, player),
+                        functools.partial(Render.resources, self, player),
                         itertools.chain(self.units.values(), self.others.values()),
                     )
                 ),
@@ -656,8 +647,8 @@ class Game(PClass):
                 project,
                 itertools.chain(
                     *map(
-                        functools.partial(Render.anchor, player),
-                        filter(lambda e: e.targeted, anchors.table),
+                        functools.partial(Render.anchor, self, player),
+                        filter(lambda e: e.targeted, self.anchors),
                     )
                 ),
             ),
@@ -667,8 +658,8 @@ class Game(PClass):
         if keys[pg.K_TAB]:
             target = next(self.cycle)
 
-            for a_idx, anchor in enumerate(anchors.table):
-                anchors.table[a_idx].targeted = anchor.guid == target
+            for a_idx, anchor in enumerate(self.anchors):
+                self.anchors[a_idx].targeted = anchor.guid == target
 
             return (
                 self.set(
@@ -750,8 +741,8 @@ class Game(PClass):
 
         _, ref_id, edge = candidate
         pos = unit.relative(edge["delta"])
-        new = anchors.get(ref_id)
-        old = anchors.get(unit.anchor_id)
+        new = self.get_anchor(ref_id)
+        old = self.get_anchor(unit.anchor_id)
 
         if old.within(unit.delta):
             return self.transform(
@@ -785,7 +776,7 @@ class Game(PClass):
         ...
         """
 
-        old = anchors.get(unit.anchor_id)
+        old = self.get_anchor(unit.anchor_id)
         candidate = min(
             filter(
                 lambda e: (
@@ -793,7 +784,7 @@ class Game(PClass):
                     and ((unit.delta[1] < 0) == ((e[2]["delta"][1]) < 0))
                     and ((unit.delta[2] < 0) == ((e[2]["delta"][2]) < 0))
                 ),
-                anchors.world.edges(unit.anchor_id, data=True),
+                self.world.edges(unit.anchor_id, data=True),
             ),
             key=lambda e: abs(e[2]["weight"]),
             default=None,
@@ -808,7 +799,7 @@ class Game(PClass):
         target: Anchor | Unit | None = self.units[self.controlled[0]]
 
         if unit.editor and any(filter(lambda e: e.name == "mover", unit.effects)):
-            target = next(filter(operator.attrgetter("targeted"), anchors.table), None)
+            target = next(filter(operator.attrgetter("targeted"), self.anchors), None)
 
             if target is None:
                 target = next(
@@ -860,9 +851,9 @@ class Game(PClass):
             if not any([keys[k] for k in [pg.K_w, pg.K_s, pg.K_a, pg.K_d]]):
                 return self
 
-            idx = anchors.table.index(target)
+            idx = self.anchors.index(target)
             u, v, data = min(
-                list(anchors.world.edges(target.id, data=True)),
+                list(self.world.edges(target.id, data=True)),
                 key=lambda e: abs(e[2]["weight"]),
             )
             x, y, z = data["delta"]
@@ -886,10 +877,10 @@ class Game(PClass):
             b["delta"] = tuple(-1 * e for e in new)
             b["weight"] = math.dist((0, 0, 0), b["delta"])
 
-            anchors.world.add_edge(u, v, **a)
-            anchors.world.add_edge(v, u, **b)
+            self.world.add_edge(u, v, **a)
+            self.world.add_edge(v, u, **b)
 
-            for e in anchors.world.edges(v, data=True):
+            for e in self.world.edges(v, data=True):
                 u1, v1, secondary = e
                 if u1 != v:
                     continue
@@ -907,11 +898,11 @@ class Game(PClass):
 
                 delta = tuple(a - b for a, b in zip(first, second))
                 weight = math.dist((0, 0, 0), delta)
-                anchors.world.add_edge(one, other, weight=weight, delta=delta)
+                self.world.add_edge(one, other, weight=weight, delta=delta)
 
                 delta = tuple(-1 * e for e in delta)
                 weight = math.dist((0, 0, 0), delta)
-                anchors.world.add_edge(other, one, weight=weight, delta=delta)
+                self.world.add_edge(other, one, weight=weight, delta=delta)
 
                 return self
 
@@ -1023,6 +1014,30 @@ class Game(PClass):
 
         return act, game.transform(("units", target.guid), lambda e: target)
 
+    def get_anchor(self, nr: int) -> Anchor | None:
+        return self.anchors[nr - 1]  # IndexError on failure
+
+    def make_anchor(
+        self, nr: int, data: dict, ref: int | None = None, delta: Location | None = None
+    ) -> PVector[Anchor]:
+        data["id"] = nr  # len(self.self.anchors) + 1
+
+        if ref is not None and delta is not None:
+            self.world.add_edge(
+                nr,
+                ref,
+                delta=delta,
+                weight=math.dist((0, 0, 0), delta),
+            )
+
+            inverse: Location = tuple(-1 * e for e in delta)
+
+            self.world.add_edge(
+                ref, nr, delta=inverse, weight=math.dist((0, 0, 0), inverse)
+            )
+
+        return [Anchor(**data)]
+
     def make_tile(self, unit: Unit) -> list[Tile]:
         params = [-1]
 
@@ -1087,68 +1102,6 @@ if __name__ == "__main__":
 
     screen = pg.display.set_mode((900, 600), pg.RESIZABLE)
     pg.display.set_caption("r/untitledMMORPG")
-
-    anchors = Anchors.create()
-
-    anchors.add(
-        dict(
-            radius=32,
-            enabled=True,
-        )
-    )
-
-    anchors.add(
-        dict(
-            radius=32,
-            enabled=True,
-        )
-    )
-
-    anchors.add(
-        dict(
-            radius=32,
-            enabled=True,
-        )
-    )
-
-    anchors.world.add_edge(
-        1,
-        2,
-        delta=(10 * 32, 0, 0),
-        weight=math.dist((0, 0, 0), (10 * 32, 0, 0)),
-    )
-
-    anchors.world.add_edge(
-        2,
-        1,
-        delta=(-10 * 32, 0, 0),
-        weight=math.dist((0, 0, 0), (10 * 32, 0, 0)),
-    )
-
-    anchors.world.add_edge(
-        1,
-        3,
-        delta=(-32, 10 * 32, 0),
-        weight=math.dist((0, 0, 0), (-32, 10 * 32, 0)),
-    )
-
-    anchors.world.add_edge(
-        3,
-        1,
-        delta=(32, -10 * 32, 0),
-        weight=math.dist((0, 0, 0), (32, -10 * 32, 0)),
-    )
-
-    if False:
-        pos = nx.spring_layout(world)
-
-        nx.draw(world, pos, with_labels=True)
-        nx.draw_networkx_edge_labels(
-            world, pos, edge_labels=nx.get_edge_attributes(world, "delta")
-        )
-
-        pyplot.show()
-        sys.exit(0)
 
     camera = NS(x=0, y=0)
 
@@ -1264,6 +1217,72 @@ if __name__ == "__main__":
     ]:
         models[model] = sprite_model(model, dimensions, sheets)
 
+    player_anchor: int = 1  # assume this will be retrieved from someplace later on
+    reference_anchor: int = (
+        2  # assume one will always be loaded as a counterbalance for the player anchor
+    )
+
+    if False:
+        pos = nx.spring_layout(world)
+
+        nx.draw(g.world, pos, with_labels=True)
+        nx.draw_networkx_edge_labels(
+            world, pos, edge_labels=nx.get_edge_attributes(world, "delta")
+        )
+
+        pyplot.show()
+        sys.exit(0)
+
+    g = Game(
+        option=itertools.cycle(
+            list(
+                sorted(
+                    itertools.product(range(0, 11), range(0, 11)),
+                    key=lambda e: e[1],
+                )
+            )
+        ),
+        model=itertools.cycle(["stag", "boar", "wolf"]),
+        ticks=pg.time.get_ticks(),
+        splash=True,
+        night=(datetime.now().hour not in range(6, 18 + 1)),
+        events=deque([]),
+        running=True,
+        targets=tuple(),
+        anchors=v(),
+        tiles=[],
+        character="stag",
+        units=m(),
+        others={},
+        controlled=[],
+        world=nx.DiGraph(),
+    )
+
+    g = g.set(
+        "anchors",
+        v(
+            *(
+                g.make_anchor(1, dict(radius=32, enabled=True), 2, (10 * 32, 0, 0))
+                + g.make_anchor(
+                    2,
+                    dict(
+                        radius=32,
+                        enabled=True,
+                    ),
+                )
+                + g.make_anchor(
+                    3,
+                    dict(
+                        radius=32,
+                        enabled=True,
+                    ),
+                    1,
+                    (32, -10 * 32, 0),
+                )
+            )
+        ),
+    )
+
     COLORMAP = NS(
         tile={
             (0, 255, 0): (1, 3),  # green
@@ -1282,7 +1301,7 @@ if __name__ == "__main__":
     tiles = []
     units = m()
 
-    for e in anchors.table:
+    for e in g.anchors:
         path = join("world", str(e.id))
         meta = join(path, "meta.json")
 
@@ -1300,11 +1319,11 @@ if __name__ == "__main__":
             img = Image.open(tilemap).convert("RGBA")
             for y in range(h):
                 for x in range(w):
-                    r, g, b, a = img.getpixel((x, y))
-                    if a < 255:
+                    _r, _g, _b, _a = img.getpixel((x, y))
+                    if _a < 255:
                         continue
 
-                    choice = COLORMAP.tile.get((r, g, b), None)
+                    choice = COLORMAP.tile.get((_r, _g, _b), None)
                     if choice is None:
                         continue
 
@@ -1321,11 +1340,11 @@ if __name__ == "__main__":
             img = Image.open(entitymap).convert("RGBA")
             for y in range(h):
                 for x in range(w):
-                    r, g, b, a = img.getpixel((x, y))
-                    if a < 255:
+                    _r, _g, _b, a = img.getpixel((x, y))
+                    if _a < 255:
                         continue
 
-                    char = COLORMAP.entity.get((r, g, b), None)
+                    char = COLORMAP.entity.get((_r, _g, _b), None)
                     if char is None:
                         continue
 
@@ -1341,28 +1360,8 @@ if __name__ == "__main__":
                         ),
                     )
 
-    g = Game(
-        option=itertools.cycle(
-            list(
-                sorted(
-                    itertools.product(range(0, 11), range(0, 11)),
-                    key=lambda e: e[1],
-                )
-            )
-        ),
-        model=itertools.cycle(["stag", "boar", "wolf"]),
-        ticks=pg.time.get_ticks(),
-        splash=True,
-        night=(datetime.now().hour not in range(6, 18 + 1)),
-        events=deque([]),
-        running=True,
-        targets=tuple(),
-        tiles=tiles,
-        character="stag",
-        units=units,
-        others={},
-        controlled=[],
-    )
+    assert isinstance(g, Game)
+    g = g.set("tiles", tiles).set("units", units)
 
     p1 = Unit(
         name="stag",
@@ -1374,7 +1373,7 @@ if __name__ == "__main__":
         health=90,
         stamina=50,
         color="blue",
-        anchor_id=1,
+        anchor_id=player_anchor,
         overlaps=[],
     )
 
@@ -1529,7 +1528,7 @@ if __name__ == "__main__":
                     map(
                         operator.attrgetter("guid"),
                         itertools.chain(
-                            tile, g.units.values(), g.others.values(), anchors.table
+                            tile, g.units.values(), g.others.values(), g.anchors
                         ),
                     )
                 )
