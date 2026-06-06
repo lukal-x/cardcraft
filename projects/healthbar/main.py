@@ -807,7 +807,7 @@ class Game(PClass):
         pos = unit.relative(edge["delta"])
         new = self.get_anchor(ref_id)
         old = self.get_anchor(unit.anchor_id)
-
+ 
         if new.within(pos) and old.within(unit.delta):
             return self.transform(
                 ("units", unit.guid),
@@ -820,15 +820,14 @@ class Game(PClass):
         if not new.within(pos):
             return self.transform(
                 ("units", unit.guid),
-                lambda e: e.set(
-                    "overlaps",
-                    list(filter(functools.partial(operator.ne, new.id), e.overlaps)),
-                ),
+                lambda e: e.set("overlaps", [_ for _ in e.overlaps if _ != new.id]),
             )
 
         return self.transform(
             ("units", unit.guid),
-            lambda e: e.set("anchor_id", new.id).set("delta", pos),
+            lambda e: e.set("anchor_id", new.id)
+            .set("delta", pos)
+            .set("overlaps", [_ for _ in e.overlaps if _ != new.id]),
         )
 
     def accessible(self, location: Location, relevant: list[Location]) -> bool:
@@ -988,42 +987,49 @@ class Game(PClass):
 
     def notify(self, unit: PMap) -> "Game":
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-            sock.sendto(
-                pickle.dumps(
-                    [
-                        unit.anchor_id,
-                        unit.name,
-                        unit.delta,
-                        unit.o,
-                        unit.state,
-                        unit.health,
-                        unit.stamina,
-                        unit.guid,
-                        int(time.time())
-                    ]
-                ),
-                ("localhost", 8818),
-            )
+            for e in [unit.anchor_id, *unit.overlaps]:
+                edge = self.world.get_edge_data(e, unit.anchor_id)
+                pos = None
+                if edge is not None:
+                    pos = unit.relative(edge["delta"])
+
+                sock.sendto(
+                    pickle.dumps(
+                        [
+                            e,
+                            unit.overlaps,
+                            unit.guid,
+                            pos or unit.delta,
+                            unit.o,
+                            unit.state,
+                            unit.health,
+                            unit.stamina,
+                            unit.name,
+                            int(time.time()),
+                        ]
+                    ),
+                    ("localhost", 8818),
+                )
 
             others = {}
-            
+
             while True:
                 data, server = sock.recvfrom(1024)
                 if not data:
                     break
 
-                anchor_id, player, delta, o, state, health, stamina, guid, seen = (
+                anchor_id, guid, delta, o, state, health, stamina, name, seen = (
                     pickle.loads(data)
                 )
 
                 others[guid] = Unit(
-                    name=player,
+                    name=name,
                     guid=guid,
                     health=health,
                     stamina=stamina,
                     o=o,
                     state=state,
-                    sprites=models[player],
+                    sprites=models[name],
                     delta=delta,
                     anchor_id=anchor_id,
                 )
@@ -1553,7 +1559,7 @@ if __name__ == "__main__":
             candidate = g.facing(g.units[guid])
             if candidate is not None:
                 one, other, edge = candidate
-                
+
                 pos = g.units[guid].relative(edge["delta"])
 
                 is_relevant = functools.partial(relevant, [other, one])
