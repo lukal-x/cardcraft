@@ -1,4 +1,5 @@
 from collections import deque
+from contextlib import suppress
 from dataclasses import (
     asdict,
     dataclass,
@@ -38,6 +39,17 @@ import pygame as pg
 def as_rgb(t: str) -> tuple[int, int, int]:
     as_hex = hashlib.md5(t.encode()).hexdigest()[:6]
     return tuple(int(as_hex[e : e + 2], 16) for e in (0, 2, 4))
+
+
+SCALE = 32
+
+
+def from_px(v: int) -> int:
+    return v // SCALE
+
+
+def to_px(v: int) -> int:
+    return v * SCALE
 
 
 Element = NS
@@ -85,9 +97,15 @@ def kiku(unit, game):
     if not created:
         return unit, game
 
-    return unit, game.set(
+    game = game.set(
         "tiles", v(*sorted(game.tiles.append(created), key=lambda e: e.delta))
     )
+
+    game.get_anchor(unit.anchor_id).recentered(
+        filter(lambda t: t.anchor_id == unit.anchor_id, game.tiles)
+    )
+
+    return unit, game
 
 
 def tochi(unit, game):
@@ -246,6 +264,7 @@ class Anchor:
     radius: int  # number of pixels in each direction
 
     centerpoint: tuple[int, int] = (0, 0)
+    dimensions: tuple[int, int] = (1, 1)
     guid: str = datafield(default_factory=lambda: str(uuid4()))
 
     targeted: bool = False
@@ -276,10 +295,14 @@ class Anchor:
             max(map(lambda e: e.delta[0], i4)),
         )
 
-        x = l + ((r - l) // 2)
-        y = t + ((b - t) // 2)
+        width = r - l
+        height = b - t
+
+        x = l + (width // 2)
+        y = t + (height // 2)
 
         self.centerpoint = (x, y)
+        self.dimensions = (width, height)
         return self
 
 
@@ -340,7 +363,7 @@ class Tile:
 
     def sprite(self):
         x, y = self.choice
-        cut: tuple[int, int, int, int] = (x - 1) * 32, (y - 1) * 32, 32, 32
+        cut: tuple[int, int, int, int] = 32 * (x - 1), 32 * (y - 1), 32, 32
 
         image = sources[self.sprites.mode[self.state].key]
 
@@ -401,7 +424,7 @@ class Unit(PClass):
         _ = ["S", "E", "W", "N"]
 
         x = 0
-        y = _.index(self.o) * 32
+        y = 32 * _.index(self.o)
 
         active = self.sprites.mode[self.state]
         image = sources[active.key]
@@ -496,7 +519,7 @@ class Render:
                 rect=pg.Rect(
                     edge["delta"][0] + unit.delta[0] - 30,
                     edge["delta"][1] + unit.delta[1] - 30,
-                    bar_w / 100 * 32,
+                    to_px(bar_w / 100),
                     bar_h,
                 ),
                 color=(0, 0, 0),
@@ -507,7 +530,7 @@ class Render:
                 rect=pg.Rect(
                     edge["delta"][0] + unit.delta[0] - 30 + 2,
                     edge["delta"][1] + unit.delta[1] - 30 + 2,
-                    ratio / 100 * 32,
+                    to_px(ratio / 100),
                     bar_h,
                 ),
                 color=(0, 255, 0) if ratio > 50 else (255, 0, 0),
@@ -519,8 +542,8 @@ class Render:
                 rect=(
                     edge["delta"][0] + unit.delta[0] - 50,
                     edge["delta"][1] + unit.delta[1] - 50,
-                    32,
-                    32,
+                    SCALE,
+                    SCALE,
                 ),
                 z=edge["delta"][2] + unit.delta[2],
             ),
@@ -530,8 +553,8 @@ class Render:
                 rect=(
                     edge["delta"][0] + unit.delta[0] - 70,
                     edge["delta"][1] + unit.delta[1] - 70,
-                    32,
-                    32,
+                    SCALE,
+                    SCALE,
                 ),
                 z=edge["delta"][2] + unit.delta[2],
             ),
@@ -541,7 +564,7 @@ class Render:
     def tile(game: "Game", player: Unit, tile: Tile) -> list[Element]:
         sprite, cut = tile.sprite()
 
-        obj = pg.Surface([32, 32], pg.SRCALPHA)
+        obj = pg.Surface([SCALE, SCALE], pg.SRCALPHA)
 
         obj.blit(sprite, (0, 0), cut)
         obj.set_colorkey("black")
@@ -568,8 +591,8 @@ class Render:
                 rect=(
                     edge["delta"][0] + tile.delta[0],
                     edge["delta"][1] + tile.delta[1],
-                    32,
-                    32,
+                    SCALE,
+                    SCALE,
                 ),
                 z=edge["delta"][2] + tile.delta[2],
             )
@@ -577,7 +600,7 @@ class Render:
 
     @staticmethod
     def unit(game: "Game", player: Unit, unit: Unit) -> list[Element]:
-        obj = pg.Surface([32, 32]).convert()
+        obj = pg.Surface([SCALE, SCALE]).convert()
 
         sprite, cut = unit.sprite()
 
@@ -603,8 +626,8 @@ class Render:
                     rect=(
                         edge["delta"][0] + unit.delta[0],
                         edge["delta"][1] + unit.delta[1],
-                        32,
-                        32 / 2,
+                        SCALE,
+                        SCALE / 2,
                     ),
                     z=edge["delta"][2] + unit.delta[2],
                     width=2,
@@ -616,10 +639,10 @@ class Render:
                 type="IMAGE",
                 obj=obj,
                 rect=(
-                    edge["delta"][0] + unit.delta[0] - 32,
-                    edge["delta"][1] + unit.delta[1] - 32,
-                    32,
-                    32,
+                    edge["delta"][0] + unit.delta[0] - SCALE,
+                    edge["delta"][1] + unit.delta[1] - SCALE,
+                    SCALE,
+                    SCALE,
                 ),
                 z=edge["delta"][2] + unit.delta[2],
             )
@@ -638,7 +661,7 @@ class Render:
             Element(
                 type="ELLIPSE",
                 color="pink",
-                rect=(edge["delta"][0], edge["delta"][1], 32, 32 / 2),
+                rect=(edge["delta"][0], edge["delta"][1], SCALE, SCALE / 2),
                 z=edge["delta"][2],
                 width=2,
             )
@@ -657,7 +680,7 @@ class Game(PClass):
     anchors: PVector[Anchor] = field()
     tiles: PVector[Tile] = field()
     others: dict[str, [Unit]] = field()  # easier to keep a separate list
-    units: PMap[str, PVector[Unit]] = field(type=PMap)
+    units: PMap[str, Unit] = field(type=PMap)
     world: nx.DiGraph = field()
 
     controlled: list[int] = field()  # index of unit
@@ -747,23 +770,94 @@ class Game(PClass):
 
         if self.units[self.controlled[0]].editor and keys[pg.K_s] and keys[pg.K_LCTRL]:
             images = {}
-            Image.new("RGBA", (10, 10))
+            sizes = {}
 
-            for e in self.tiles:
-                path = join("world", str(e.anchor_id), "tilemap.png")
+            for e in self.anchors:
+                relevant = filter(lambda t: t.anchor_id == e.id, self.tiles)
+                i1, i2, i3 = itertools.tee(relevant, 3)
+
+                reference = e.recentered(i1)
+
+                size = tuple(map(from_px, reference.dimensions))
+                size_of_image = tuple(
+                    map(functools.partial(operator.add, 1), size),
+                )
+
+                offset = (
+                    from_px(min(map(lambda e: e.delta[0], i2))),
+                    from_px(min(map(lambda e: e.delta[1], i3))),
+                )
+
+                path = join("world", str(e.id), "tilemap.png")
+                sizes[path] = size_of_image
+
                 if path not in images:
-                    images[path] = Image.new("RGBA", (10, 10))
+                    assert reference.dimensions != (0, 0)
+                    images[path] = Image.new("RGBA", size_of_image)
 
-                color = COLORMAP_R.tile.get(e.choice, None)
-                x, y, z = e.delta
-                if color is None:
-                    continue
+                for t in self.tiles:
+                    if t.anchor_id != e.id:
+                        continue
 
-                images[path].putpixel((x // 32, y // 32), color)
+                    color = COLORMAP_R.tile.get(t.choice, None)
+                    delta = tuple(map(from_px, t.delta))
+
+                    x = delta[0] - offset[0]
+                    y = delta[1] - offset[1]
+                    z = delta[2]
+
+                    if color is None:
+                        continue
+
+                    if not (
+                        x in range(0, size_of_image[0])
+                        and y in range(0, size_of_image[1])
+                    ):
+                        raise Exception(
+                            f"Unable to update {path}: {x, y} not within {size_of_image}"
+                        )
+
+                    images[path].putpixel((x, y), color)
+
+                path = join("world", str(e.id), "entitymap.png")
+                sizes[path] = size_of_image
+
+                if path not in images:
+                    assert reference.dimensions != (0, 0)
+                    images[path] = Image.new("RGBA", size_of_image)
+
+                for guid in self.units:
+                    u = self.units[guid]
+
+                    if guid in self.controlled:
+                        continue
+
+                    if u.anchor_id != e.id:
+                        continue
+
+                    color = (255, 0, 0)
+                    delta = tuple(map(from_px, u.delta))
+
+                    x = delta[0] - offset[0]
+                    y = delta[1] - offset[1]
+                    z = delta[2]
+
+                    if not (
+                        x in range(0, size_of_image[0])
+                        and y in range(0, size_of_image[1])
+                    ):
+                        raise Exception(
+                            f"Unable to update {path}: {x, y} not within {size_of_image}"
+                        )
+
+                    images[path].putpixel((x, y), color)
 
             for path, img in images.items():
                 Path(dirname(path)).mkdir(exist_ok=True)
                 img.save(path)
+                
+                with open(join(dirname(path), "meta.json"), "w") as f:
+                    f.write(json.dumps(list(sizes[path])))
 
             time.sleep(3)
 
@@ -807,7 +901,7 @@ class Game(PClass):
         pos = unit.relative(edge["delta"])
         new = self.get_anchor(ref_id)
         old = self.get_anchor(unit.anchor_id)
- 
+
         if new.within(pos) and old.within(unit.delta):
             return self.transform(
                 ("units", unit.guid),
@@ -924,13 +1018,13 @@ class Game(PClass):
             old = new = data["delta"]
 
             if keys[pg.K_w]:
-                new = (x, y - 32, z)
+                new = (x, y - SCALE, z)
             if keys[pg.K_s]:
-                new = (x, y + 32, z)
+                new = (x, y + SCALE, z)
             if keys[pg.K_a]:
-                new = (x - 32, y, z)
+                new = (x - SCALE, y, z)
             if keys[pg.K_d]:
-                new = (x + 32, y, z)
+                new = (x + SCALE, y, z)
 
             a = data.copy()
             a["delta"] = new
@@ -1037,8 +1131,8 @@ class Game(PClass):
             return self.set("others", others)
 
     def position(self, x: int, y: int, z: int):
-        _x = 32 * (x // 32)
-        _y = 32 * (y // 32)
+        _x = to_px(from_px(x))
+        _y = to_px(from_px(y))
         _z = 8 * (z // 8)
 
         return (_x, _y, _z)
@@ -1117,48 +1211,51 @@ class Game(PClass):
     def make_anchor(self, unit: Unit) -> Anchor | None:
         params = [-1]
 
-        r = rebase = lambda v: 32 * (v // 32)
+        r = rebase = lambda v: to_px(from_px(v))
         _x, _y, _z = unit.delta
 
         match unit.o:
             case "S":
-                params = r(_x), r(_y) + 32, r(_z)
+                params = r(_x), r(_y) + SCALE, r(_z)
             case "E":
-                params = r(_x) + 32, r(_y), r(_z)
+                params = r(_x) + SCALE, r(_y), r(_z)
             case "W":
-                params = r(_x) - 32, r(_y), r(_z)
+                params = r(_x) - SCALE, r(_y), r(_z)
             case "N":
-                params = r(_x), r(_y) - 32, r(_z)
+                params = r(_x), r(_y) - SCALE, r(_z)
 
         if any(e for e in self.tiles if e.delta == params):
             return None
 
         return self.new_anchor(
-            len(self.anchors) + 1, dict(radius=64, enabled=True), unit.anchor_id, params
+            len(self.anchors) + 1,
+            dict(radius=128, enabled=True),
+            unit.anchor_id,
+            params,
         )
 
     def make_tile(self, unit: Unit) -> Tile | None:
         params = [-1]
 
-        r = rebase = lambda v: 32 * (v // 32)
+        r = rebase = lambda v: to_px(from_px(v))
         _x, _y, _z = unit.delta
 
         match unit.o:
             case "S":
-                params = r(_x), r(_y) + 32, r(_z)
+                params = r(_x), r(_y) + SCALE, r(_z)
             case "E":
-                params = r(_x) + 32, r(_y), r(_z)
+                params = r(_x) + SCALE, r(_y), r(_z)
             case "W":
-                params = r(_x) - 32, r(_y), r(_z)
+                params = r(_x) - SCALE, r(_y), r(_z)
             case "N":
-                params = r(_x), r(_y) - 32, r(_z)
+                params = r(_x), r(_y) - SCALE, r(_z)
 
         if any(e for e in self.tiles if e.delta == params):
             return None
 
         return Tile(
             params,
-            choice=self.choice,
+            choice=COLORMAP.tile[(128, 64, 0)],
             sprites=models["ground"],
             anchor_id=unit.anchor_id,
         )
@@ -1228,11 +1325,12 @@ if __name__ == "__main__":
         for mode, sheet in sheets:
             raw = sheet()
             img = pg.transform.scale(
-                raw, (raw.width * 32 / sprite_width, raw.height * 32 / sprite_height)
+                raw,
+                (to_px(raw.width) / sprite_width, to_px(raw.height) / sprite_height),
             )
 
             key = f"{model}_{mode}"
-            cycles[key] = itertools.cycle(range(0, img.width, 32))
+            cycles[key] = itertools.cycle(range(0, img.width, SCALE))
             sources[key] = img.convert_alpha()
             frame[key] = 0
 
@@ -1289,7 +1387,7 @@ if __name__ == "__main__":
         ),
         (
             "stag",
-            (32, 41),
+            (SCALE, 41),
             [
                 (
                     "run",
@@ -1366,7 +1464,7 @@ if __name__ == "__main__":
                     enabled=True,
                 ),
                 1,
-                (12 * 32, 0, 0),
+                (14 * SCALE, 0, 0),
             ),
         ),
     )
@@ -1403,11 +1501,25 @@ if __name__ == "__main__":
         with open(meta, "r") as f:
             _w, _h = tuple(json.loads(f.read()))
 
+            _w = _w + _w % 2
+            _h = _h + _h % 2
+
         if exists(tilemap):
             img = Image.open(tilemap).convert("RGBA")
+            offset = (to_px(_w) // 2, to_px(_h) // 2)
+
             for y in range(_h):
                 for x in range(_w):
-                    _r, _g, _b, _a = img.getpixel((x, y))
+                    px = None
+
+                    with suppress(Exception):
+                        px = img.getpixel((x, y))
+
+                    if px is None:
+                        continue
+
+                    _r, _g, _b, _a = px
+
                     if _a < 255:
                         continue
 
@@ -1417,7 +1529,7 @@ if __name__ == "__main__":
 
                     tiles = tiles.append(
                         Tile(
-                            delta=(32 * x, 32 * y, 0),
+                            delta=(to_px(x) - offset[0], to_px(y) - offset[1], 0),
                             choice=choice,
                             sprites=models["ground"],
                             anchor_id=e.id,
@@ -1428,9 +1540,20 @@ if __name__ == "__main__":
 
         if exists(entitymap):
             img = Image.open(entitymap).convert("RGBA")
+            offset = (to_px(_w) // 2, to_px(_h) // 2)
+
             for y in range(_h):
                 for x in range(_w):
-                    _r, _g, _b, a = img.getpixel((x, y))
+                    px = None
+
+                    with suppress(Exception):
+                        px = img.getpixel((x, y))
+
+                    if px is None:
+                        continue
+
+                    _r, _g, _b, a = px
+
                     if _a < 255:
                         continue
 
@@ -1441,7 +1564,7 @@ if __name__ == "__main__":
                     units = units.set(
                         str(uuid4()),
                         Unit(
-                            delta=(32 * x, 32 * y, 0),
+                            delta=(to_px(x) - offset[0], to_px(y) - offset[1], 0),
                             sprites=char,
                             anchor_id=e.id,
                             stamina=123,
@@ -1478,21 +1601,6 @@ if __name__ == "__main__":
             anchor_id=1,
             overlaps=[],
         )
-
-    if not g.units:
-        npc1 = Unit(
-            name="wolf",
-            sprites=models["wolf"],
-            client=False,
-            delta=(0, 0, 0),
-            health=80,
-            stamina=50,
-            color="blue",
-            anchor_id=2,
-            overlaps=[],
-        )
-
-        g = g.set("units", g.units.set(npc1.guid, npc1))
 
     g = (
         g.set("units", g.units.set(p1.guid, p1))
