@@ -1655,12 +1655,13 @@ if __name__ == "__main__":
 
             relevant = lambda presence, e: e.anchor_id in presence
             is_relevant = functools.partial(relevant, [g.units[guid].anchor_id])
+            is_walkable = lambda t: t.choice not in [COLORMAP.tile.get((0, 0, 255))]
 
             legal: bool = g.accessible(
                 g.units[guid].delta,
                 map(
                     operator.attrgetter("delta"),
-                    filter(is_relevant, g.tiles),
+                    filter(is_walkable, filter(is_relevant, g.tiles)),
                 ),
             )
 
@@ -1676,7 +1677,7 @@ if __name__ == "__main__":
                     pos,
                     map(
                         lambda e: e.delta,
-                        filter(is_relevant, g.tiles),
+                        filter(is_walkable, filter(is_relevant, g.tiles)),
                     ),
                 )
                 legal = legal or possible
