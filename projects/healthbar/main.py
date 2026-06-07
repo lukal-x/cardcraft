@@ -857,7 +857,7 @@ class Game(PClass):
                 img.save(path)
 
                 with open(join(dirname(path), "meta.json"), "w") as f:
-                    f.write(json.dumps(list(sizes[path])))
+                    f.write(json.dumps({"size": list(sizes[path])}))
 
             time.sleep(3)
 
@@ -1503,7 +1503,7 @@ if __name__ == "__main__":
             continue
 
         with open(meta, "r") as f:
-            _w, _h = tuple(json.loads(f.read()))
+            _w, _h = tuple(json.loads(f.read())["size"])
 
             _w = _w + _w % 2
             _h = _h + _h % 2
