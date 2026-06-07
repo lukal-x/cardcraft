@@ -132,7 +132,7 @@ def tochi(unit, game):
                     game.tiles.append(
                         Tile(
                             (0, 0, 0),
-                            choice=game.choice,
+                            choice=COLORMAP.tile[(128, 64, 0)],
                             sprites=models["ground"],
                             anchor_id=created.id,
                         )
@@ -568,7 +568,7 @@ class Render:
 
         obj.blit(sprite, (0, 0), cut)
         obj.set_colorkey("black")
-        obj.set_alpha(30)
+        obj.set_alpha(50)
 
         if tile.targeted:
             obj.fill((30, 30, 30, 0), special_flags=pg.BLEND_RGBA_ADD)
@@ -606,7 +606,7 @@ class Render:
 
         obj.blit(sprite, (0, 0), cut)
         obj.set_colorkey("black")
-        obj.set_alpha(30)
+        obj.set_alpha(50)
 
         visible = []
 
@@ -855,7 +855,7 @@ class Game(PClass):
             for path, img in images.items():
                 Path(dirname(path)).mkdir(exist_ok=True)
                 img.save(path)
-                
+
                 with open(join(dirname(path), "meta.json"), "w") as f:
                     f.write(json.dumps(list(sizes[path])))
 
@@ -1224,7 +1224,9 @@ class Game(PClass):
             case "N":
                 params = r(_x), r(_y) - SCALE, r(_z)
 
-        if any(e for e in self.tiles if e.delta == params):
+        if any(
+            e for e in self.tiles if e.delta == params and e.anchor_id == unit.anchor_id
+        ):
             return None
 
         return self.new_anchor(
@@ -1250,7 +1252,9 @@ class Game(PClass):
             case "N":
                 params = r(_x), r(_y) - SCALE, r(_z)
 
-        if any(e for e in self.tiles if e.delta == params):
+        if any(
+            e for e in self.tiles if e.delta == params and e.anchor_id == unit.anchor_id
+        ):
             return None
 
         return Tile(
