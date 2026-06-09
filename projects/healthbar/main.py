@@ -1460,7 +1460,13 @@ if __name__ == "__main__":
         option=itertools.cycle(
             list(
                 sorted(
-                    itertools.product(range(0, 11), range(0, 11)),
+                    [
+                        (1, 3),  # green
+                        (4, 1),  # brown
+                        (9, 6),  # gray
+                        (1, 11),  # blue
+                    ],
+                    # itertools.product(range(1, 12), range(1, 12)),
                     key=lambda e: e[1],
                 )
             )
