@@ -31,7 +31,7 @@ import typing
 
 from matplotlib import pyplot
 from PIL import Image
-from pyrsistent import PClass, PMap, PVector, field, m, ny, v
+from pyrsistent import PClass, PMap, PVector, field, m, ny, v as vec
 import networkx as nx
 import pygame as pg
 
@@ -77,7 +77,7 @@ def modo(unit, game):
             if not unit.editor
             else game.set("choice", choice).set(
                 "tiles",
-                v(
+                vec(
                     *map(
                         lambda e: (replace(e, choice=choice) if e.targeted else e),
                         game.tiles,
@@ -98,11 +98,7 @@ def kiku(unit, game):
         return unit, game
 
     game = game.set(
-        "tiles", v(*sorted(game.tiles.append(created), key=lambda e: e.delta))
-    )
-
-    game.get_anchor(unit.anchor_id).recentered(
-        filter(lambda t: t.anchor_id == unit.anchor_id, game.tiles)
+        "tiles", vec(*sorted(game.tiles.append(created), key=lambda e: e.delta))
     )
 
     return unit, game
@@ -117,29 +113,26 @@ def tochi(unit, game):
     if not created:
         return unit, game
 
-    return (
-        unit,
-        game.set(
-            "anchors",
-            game.anchors
-            + v(
-                created,
-            ),
-        ).set(
-            "tiles",
-            v(
-                *sorted(
-                    game.tiles.append(
-                        Tile(
-                            (0, 0, 0),
-                            choice=COLORMAP.tile[(128, 64, 0)],
-                            sprites=models["ground"],
-                            anchor_id=created.id,
-                        )
-                    ),
-                    key=lambda e: e.delta,
-                )
-            ),
+    game = game.set(
+        "anchors",
+        game.anchors
+        + vec(
+            created,
+        ),
+    ).set(
+        "tiles",
+        vec(
+            *sorted(
+                game.tiles.append(
+                    Tile(
+                        (0, 0, 0),
+                        choice=COLORMAP.tile[(128, 64, 0)],
+                        sprites=models["ground"],
+                        anchor_id=created.id,
+                    )
+                ),
+                key=lambda e: e.delta,
+            )
         ),
     )
 
@@ -159,7 +152,7 @@ SPELLS = {
             if not unit.editor
             else game.set(
                 "tiles",
-                v(
+                vec(
                     *map(
                         lambda e: replace(e, choice=game.choice) if e.targeted else e,
                         game.tiles,
@@ -175,7 +168,7 @@ SPELLS = {
             if not unit.editor
             else game.set(
                 "tiles",
-                v(
+                vec(
                     *filter(
                         lambda e: not e.targeted
                         or (
@@ -225,7 +218,7 @@ SPELLS = {
                 "effects",
                 unit.effects.append(
                     Effect(
-                        tags=v(*["game-master"]),
+                        tags=vec(*["game-master"]),
                         name="mover",
                         started_at=game.ticks // 1000,
                         duration=30,
@@ -276,10 +269,12 @@ class Anchor:
         xc, yc = self.centerpoint
 
         diameter = self.radius * 2
-        dist = self.radius
+
+        dist = SCALE * 3 + self.dimensions[0] // 2
         if x not in range(xc - dist, xc + dist):
             return False
 
+        dist = SCALE * 3 + self.dimensions[1] // 2
         if y not in range(yc - dist, yc + dist):
             return False
 
@@ -381,7 +376,7 @@ class Unit(PClass):
     health: int = field(int)
     stamina: int = field(int)
 
-    effects: PVector[Effect] = field(initial=v())
+    effects: PVector[Effect] = field(initial=vec())
     sprites: Sprites = field(type=Sprites)
 
     guid = field(type=str, initial=lambda: str(uuid4()))
@@ -412,7 +407,7 @@ class Unit(PClass):
         return Unit(
             **dict(
                 data,
-                effects=v(*data.get("effects", [])),
+                effects=vec(*data.get("effects", [])),
                 sprites=Sprites.fromdict(data["sprites"]),
             )
         )
@@ -443,9 +438,9 @@ class Unit(PClass):
 
     def distance(self) -> int:
         if self.stepped > 10:
-            return 5
+            return 6
 
-        return 3
+        return 4
 
 
 class Render:
@@ -704,7 +699,22 @@ class Game(PClass):
                 itertools.chain(
                     *map(
                         functools.partial(Render.tile, self, player),
-                        sorted(self.tiles, key=lambda e: e.delta),
+                        sorted(
+                            self.tiles,
+                            key=lambda e: tuple(
+                                reversed(
+                                    e.relative(
+                                        self.world[player.anchor_id][e.anchor_id][
+                                            "delta"
+                                        ]
+                                        if self.world.has_edge(
+                                            player.anchor_id, e.anchor_id
+                                        )
+                                        else (0, 0, 0)
+                                    )
+                                )
+                            ),
+                        ),
                     )
                 ),
             ),
@@ -747,7 +757,7 @@ class Game(PClass):
             return (
                 self.set(
                     "tiles",
-                    v(
+                    vec(
                         *map(
                             lambda e: replace(e, targeted=e.guid == target), self.tiles
                         )
@@ -769,10 +779,12 @@ class Game(PClass):
             )
 
         if self.units[self.controlled[0]].editor and keys[pg.K_s] and keys[pg.K_LCTRL]:
+            anchors = {}
             images = {}
             sizes = {}
 
             for e in self.anchors:
+                Path(join("world", str(e.id))).mkdir(exist_ok=True)
                 relevant = filter(lambda t: t.anchor_id == e.id, self.tiles)
                 i1, i2, i3 = itertools.tee(relevant, 3)
 
@@ -852,12 +864,24 @@ class Game(PClass):
 
                     images[path].putpixel((x, y), color)
 
-            for path, img in images.items():
-                Path(dirname(path)).mkdir(exist_ok=True)
-                img.save(path)
+                distances = {}
+                for edge in self.world.in_edges(e.id, data=True):
+                    u, v, data = edge
+                    distances[str(u)] = list(
+                        map(from_px, tuple(-1 * _ for _ in data["delta"]))
+                    )
+
+                data = {
+                    "size": list(sizes[path]),
+                    "radius": e.radius // SCALE,
+                    "distances": distances,
+                }
 
                 with open(join(dirname(path), "meta.json"), "w") as f:
-                    f.write(json.dumps({"size": list(sizes[path])}))
+                    f.write(json.dumps(data))
+
+            for path, img in images.items():
+                img.save(path)
 
             time.sleep(3)
 
@@ -900,9 +924,14 @@ class Game(PClass):
         ref_id, _, edge = candidate
         pos = unit.relative(edge["delta"])
         new = self.get_anchor(ref_id)
+
+        assert ref_id == new.id, repr(self.anchors)
+
         old = self.get_anchor(unit.anchor_id)
 
-        if new.within(pos) and old.within(unit.delta):
+        proportional = (sum(new.dimensions) / 2) < (sum(old.dimensions) / 2)
+        
+        if not proportional and (new.within(pos) and old.within(unit.delta)):
             return self.transform(
                 ("units", unit.guid),
                 lambda e: e.set(
@@ -934,23 +963,27 @@ class Game(PClass):
         """
 
         old = self.get_anchor(unit.anchor_id)
+
+        def distance(tile: Tile) -> Location:
+            edge = self.world[tile.anchor_id][unit.anchor_id]
+
+            real1 = tile.delta
+            real2 = unit.relative(edge["delta"])
+
+            return math.dist(real2, real1)
+
         candidate = min(
-            filter(
-                lambda e: (
-                    ((unit.delta[0] < 0) == ((e[2]["delta"][0]) < 0))
-                    and ((unit.delta[1] < 0) == ((e[2]["delta"][1]) < 0))
-                    and ((unit.delta[2] < 0) == ((e[2]["delta"][2]) < 0))
-                ),
-                self.world.in_edges(unit.anchor_id, data=True),
-            ),
-            key=lambda e: abs(e[2]["weight"]),
+            filter(lambda t: t.anchor_id != unit.anchor_id, self.tiles),
+            key=distance,
             default=None,
         )
 
         if candidate is None:
             return None
 
-        return candidate
+        u, v = candidate.anchor_id, unit.anchor_id
+        edge = (u, v, self.world[u][v])
+        return edge
 
     def movements(self, keys: dict[int, bool], mx: int, my: int) -> "Game":
         target: Anchor | Unit | None = self.units[self.controlled[0]]
@@ -1185,7 +1218,10 @@ class Game(PClass):
         return act, game.transform(("units", target.guid), lambda e: target)
 
     def get_anchor(self, nr: int) -> Anchor | None:
-        return self.anchors[nr - 1]  # IndexError on failure
+        if len(self.anchors) < nr:
+            return None
+
+        return self.anchors[nr - 1]
 
     def new_anchor(
         self, nr: int, data: dict, ref: int | None = None, delta: Location | None = None
@@ -1209,20 +1245,11 @@ class Game(PClass):
         return Anchor(**data)
 
     def make_anchor(self, unit: Unit) -> Anchor | None:
-        params = [-1]
-
-        r = rebase = lambda v: to_px(from_px(v))
-        _x, _y, _z = unit.delta
-
-        match unit.o:
-            case "S":
-                params = r(_x), r(_y) + SCALE, r(_z)
-            case "E":
-                params = r(_x) + SCALE, r(_y), r(_z)
-            case "W":
-                params = r(_x) - SCALE, r(_y), r(_z)
-            case "N":
-                params = r(_x), r(_y) - SCALE, r(_z)
+        params = [
+            to_px(from_px(unit.delta[0])) - (10 * SCALE),
+            to_px(from_px(unit.delta[1])) - (10 * SCALE),
+            0,
+        ]
 
         if any(
             e for e in self.tiles if e.delta == params and e.anchor_id == unit.anchor_id
@@ -1231,7 +1258,7 @@ class Game(PClass):
 
         return self.new_anchor(
             len(self.anchors) + 1,
-            dict(radius=128, enabled=True),
+            dict(radius=4 * SCALE, enabled=True),
             unit.anchor_id,
             params,
         )
@@ -1416,7 +1443,7 @@ if __name__ == "__main__":
     ]:
         models[model] = sprite_model(model, dimensions, sheets)
 
-    player_anchor: int = 1  # assume this will be retrieved from someplace later on
+    player_anchor: int = 2  # assume this will be retrieved from someplace later on
     reference_anchor: int = (
         2  # assume one will always be loaded as a counterbalance for the player anchor
     )
@@ -1448,29 +1475,13 @@ if __name__ == "__main__":
         events=deque([]),
         running=True,
         targets=tuple(),
-        anchors=v(),
-        tiles=v(),
+        anchors=vec(),
+        tiles=vec(),
         character="stag",
         units=m(),
         others={},
         controlled=[],
         world=nx.DiGraph(),
-    )
-
-    g = g.set(
-        "anchors",
-        v(
-            g.new_anchor(1, dict(radius=256, enabled=True)),
-            g.new_anchor(
-                2,
-                dict(
-                    radius=288,
-                    enabled=True,
-                ),
-                1,
-                (14 * SCALE, 0, 0),
-            ),
-        ),
     )
 
     COLORMAP = NS(
@@ -1488,11 +1499,11 @@ if __name__ == "__main__":
         # entity={e: c for c, e in COLORMAP.entity.items()}
     )
 
-    tiles = v()
+    tiles = vec()
     units = m()
 
-    for e in g.anchors:
-        path = join("world", str(e.id))
+    for anchor_id in sorted(map(int, os.listdir("world"))):
+        path = join("world", str(anchor_id))
         meta = join(path, "meta.json")
 
         tilemap = join(path, "tilemap.png")
@@ -1503,7 +1514,28 @@ if __name__ == "__main__":
             continue
 
         with open(meta, "r") as f:
-            _w, _h = tuple(json.loads(f.read())["size"])
+            thing = json.loads(f.read())
+            params = (anchor_id, dict(radius=SCALE * thing["radius"], enabled=True))
+            additions = []
+
+            for ref, delta in thing.get("distances", {}).items():
+                additions.append((*params, int(ref), tuple(map(to_px, delta))))
+
+            if not additions:
+                additions = [params]
+
+            loaded = g.anchors
+            for addition in additions:
+                anchor = g.new_anchor(*addition)
+
+                if anchor.id in map(operator.attrgetter("id"), loaded):
+                    continue
+
+                loaded = loaded.append(anchor)
+
+            g = g.set("anchors", loaded)
+
+            _w, _h = tuple(thing["size"])
 
             _w = _w + _w % 2
             _h = _h + _h % 2
@@ -1536,11 +1568,13 @@ if __name__ == "__main__":
                             delta=(to_px(x) - offset[0], to_px(y) - offset[1], 0),
                             choice=choice,
                             sprites=models["ground"],
-                            anchor_id=e.id,
+                            anchor_id=anchor_id,
                         )
                     )
 
-            g.get_anchor(e.id).recentered(filter(lambda t: t.anchor_id == e.id, tiles))
+            g.get_anchor(anchor_id).recentered(
+                filter(lambda t: t.anchor_id == anchor_id, tiles)
+            )
 
         if exists(entitymap):
             img = Image.open(entitymap).convert("RGBA")
@@ -1570,7 +1604,7 @@ if __name__ == "__main__":
                         Unit(
                             delta=(to_px(x) - offset[0], to_px(y) - offset[1], 0),
                             sprites=char,
-                            anchor_id=e.id,
+                            anchor_id=anchor_id,
                             stamina=123,
                             health=500,
                             name="asdf",
@@ -1625,7 +1659,7 @@ if __name__ == "__main__":
         tock = False
         now = pg.time.get_ticks()
 
-        if now - last >= 200:
+        if now - last >= 100:
             tock = True
             last = now
 
@@ -1672,7 +1706,6 @@ if __name__ == "__main__":
             candidate = g.facing(g.units[guid])
             if candidate is not None:
                 one, other, edge = candidate
-
                 pos = g.units[guid].relative(edge["delta"])
 
                 is_relevant = functools.partial(relevant, [other, one])
