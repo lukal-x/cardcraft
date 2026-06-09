@@ -923,34 +923,31 @@ class Game(PClass):
 
         ref_id, _, edge = candidate
         pos = unit.relative(edge["delta"])
-        new = self.get_anchor(ref_id)
 
-        assert ref_id == new.id, repr(self.anchors)
+        total = math.dist((0, 0, 0), edge["delta"])
+        old = int(math.dist((0, 0, 0), unit.delta))
+        new = int(math.dist(unit.delta, edge["delta"]))
 
-        old = self.get_anchor(unit.anchor_id)
+        midpoint = range(int(total * 0.33), int(total * 0.66))
 
-        proportional = (sum(new.dimensions) / 2) < (sum(old.dimensions) / 2)
-        
-        if not proportional and (new.within(pos) and old.within(unit.delta)):
+        if old in midpoint:
             return self.transform(
                 ("units", unit.guid),
                 lambda e: e.set(
                     "overlaps",
-                    e.overlaps if new.id in e.overlaps else e.overlaps + [new.id],
+                    [ref_id],
                 ),
             )
 
-        if not new.within(pos):
+        if old < new:
             return self.transform(
                 ("units", unit.guid),
-                lambda e: e.set("overlaps", [_ for _ in e.overlaps if _ != new.id]),
+                lambda e: e.set("overlaps", []),
             )
 
         return self.transform(
             ("units", unit.guid),
-            lambda e: e.set("anchor_id", new.id)
-            .set("delta", pos)
-            .set("overlaps", [_ for _ in e.overlaps if _ != new.id]),
+            lambda e: e.set("anchor_id", ref_id).set("delta", pos).set("overlaps", []),
         )
 
     def accessible(self, location: Location, relevant: list[Location]) -> bool:
