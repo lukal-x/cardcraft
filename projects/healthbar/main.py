@@ -411,6 +411,7 @@ async def main():
         editor: bool = field(type=bool, initial=False)
         targeted: bool = field(type=bool, initial=False)
         stepped: int = field(type=int, initial=0)
+        jumped: int = field(type=int, initial=0)
 
         delta: Location = field(type=tuple, initial=(100, 100, 0))
         o: typing.Literal["S", "E", "W", "N"] = field(type=str, initial="N")
@@ -708,28 +709,22 @@ async def main():
             project = functools.partial(projected, screen.width, screen.height)
             player = self.units[self.controlled[0]]
 
+            def distance(e) -> tuple[int, int, int]:
+                truedist = e.relative(
+                    self.world[player.anchor_id][e.anchor_id]["delta"]
+                    if self.world.has_edge(player.anchor_id, e.anchor_id)
+                    else (0, 0, 0)
+                )
+
+                return (truedist[1], truedist[0], truedist[2])
+
             return [
                 *map(
                     project,
                     itertools.chain(
                         *map(
                             functools.partial(Render.tile, self, player),
-                            sorted(
-                                self.tiles,
-                                key=lambda e: tuple(
-                                    reversed(
-                                        e.relative(
-                                            self.world[player.anchor_id][e.anchor_id][
-                                                "delta"
-                                            ]
-                                            if self.world.has_edge(
-                                                player.anchor_id, e.anchor_id
-                                            )
-                                            else (0, 0, 0)
-                                        )
-                                    )
-                                ),
-                            ),
+                            sorted(self.tiles, key=distance),
                         )
                     ),
                 ),
@@ -974,8 +969,11 @@ async def main():
                 .set("overlaps", []),
             )
 
-        def accessible(self, location: Location, relevant: list[Location]) -> bool:
-            return self.position(*location) in relevant
+        def accessible(
+            self, location: Location, relevant: typing.Iterable[Location]
+        ) -> bool:
+            x, y, _ = self.position(*location)
+            return (x, y) in map(lambda e: (e[0], e[1]), relevant)
 
         def facing(self, unit: Unit) -> tuple[int, int, dict]:
             """which anchor is the unit facing
@@ -1023,7 +1021,9 @@ async def main():
                     )
 
             if isinstance(target, Unit):
-                if not any([keys[k] for k in [pg.K_w, pg.K_s, pg.K_a, pg.K_d]]):
+                if not any(
+                    [keys[k] for k in [pg.K_w, pg.K_s, pg.K_a, pg.K_d, pg.K_SPACE]]
+                ):
                     return self.transform(
                         ("units", target.guid),
                         lambda e: e.set("state", "idle").set("stepped", 0),
@@ -1033,6 +1033,12 @@ async def main():
                 runner: Unit = target.set("state", "run").set(
                     "stepped", target.stepped + 1 if target.stepped < 100 else 6
                 )
+
+                if keys[pg.K_SPACE] and runner.jumped < 1:
+                    runner = runner.set("jumped", 5).set(
+                        "delta",
+                        (target.delta[0], target.delta[1], target.delta[2] + 5),
+                    )
 
                 if keys[pg.K_w]:
                     runner = runner.set("o", "N").set(
@@ -1140,7 +1146,7 @@ async def main():
 
         def notify(self, unit: PMap) -> "Game":
             return self
-        
+
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
                 for e in [unit.anchor_id, *unit.overlaps]:
                     edge = self.world.get_edge_data(e, unit.anchor_id)
@@ -1194,7 +1200,7 @@ async def main():
         def position(self, x: int, y: int, z: int):
             _x = to_px(from_px(x))
             _y = to_px(from_px(y))
-            _z = 8 * (z // 8)
+            _z = to_px(from_px(z))
 
             return (_x, _y, _z)
 
@@ -1351,7 +1357,7 @@ async def main():
     frame: dict[str, typing.Any] = {}
 
     sources: dict[str, pg.image] = {
-        "ground_idle": pg.image.load("tiles.png").convert_alpha()
+        "ground_idle": pg.image.load("tiles1.png").convert_alpha()
     }
 
     models = {
@@ -1588,75 +1594,103 @@ async def main():
             _h = _h + _h % 2
 
         if exists(tilemap):
-            img = Image.open(tilemap).convert("RGBA")
-            offset = (to_px(_w) // 2, to_px(_h) // 2)
+            heights = {}
 
-            for y in range(_h):
-                for x in range(_w):
-                    px = None
+            if exists(heightmap):
+                with Image.open(heightmap).convert("RGBA") as img:
+                    for y in range(_h):
+                        for x in range(_w):
+                            vertical = None
 
-                    with suppress(Exception):
-                        px = img.getpixel((x, y))
+                            with suppress(Exception):
+                                vertical = img.getpixel((x, y))
 
-                    if px is None:
-                        continue
+                            if vertical is None:
+                                continue
 
-                    _r, _g, _b, _a = px
+                            _r, _g, _b, _a = vertical
 
-                    if _a < 255:
-                        continue
+                            if not (_r == _g == _b):
+                                continue
 
-                    choice = COLORMAP.tile.get((_r, _g, _b), None)
-                    if choice is None:
-                        continue
+                            if x not in heights:
+                                heights[x] = {}
 
-                    tiles = tiles.append(
-                        Tile(
-                            delta=(to_px(x) - offset[0], to_px(y) - offset[1], 0),
-                            choice=choice,
-                            sprites=models["ground"],
-                            anchor_id=anchor_id,
+                            heights[x][y] = _r - 128
+
+            with Image.open(tilemap).convert("RGBA") as img:
+                offset = (to_px(_w) // 2, to_px(_h) // 2)
+
+                for y in range(_h):
+                    for x in range(_w):
+                        px = None
+
+                        with suppress(Exception):
+                            px = img.getpixel((x, y))
+
+                        if px is None:
+                            continue
+
+                        _r, _g, _b, _a = px
+
+                        if _a < 255:
+                            continue
+
+                        choice = COLORMAP.tile.get((_r, _g, _b), None)
+                        if choice is None:
+                            continue
+
+                        z = 0
+                        if heights:
+                            z = heights[x][y]
+
+                        tiles = tiles.append(
+                            Tile(
+                                delta=(to_px(x) - offset[0], to_px(y) - offset[1], z),
+                                choice=choice,
+                                sprites=models["ground"],
+                                anchor_id=anchor_id,
+                            )
                         )
-                    )
 
             g.get_anchor(anchor_id).recentered(
                 filter(lambda t: t.anchor_id == anchor_id, tiles)
             )
 
         if exists(entitymap):
-            img = Image.open(entitymap).convert("RGBA")
-            offset = (to_px(_w) // 2, to_px(_h) // 2)
+            with Image.open(entitymap).convert("RGBA") as img:
+                offset = (to_px(_w) // 2, to_px(_h) // 2)
 
-            for y in range(_h):
-                for x in range(_w):
-                    px = None
+                for y in range(_h):
+                    for x in range(_w):
+                        px = None
 
-                    with suppress(Exception):
-                        px = img.getpixel((x, y))
+                        with suppress(Exception):
+                            px = img.getpixel((x, y))
 
-                    if px is None:
-                        continue
+                        if px is None:
+                            continue
 
-                    _r, _g, _b, a = px
+                        _r, _g, _b, a = px
 
-                    if _a < 255:
-                        continue
+                        if _a < 255:
+                            continue
 
-                    char = COLORMAP.entity.get((_r, _g, _b), None)
-                    if char is None:
-                        continue
+                        char = COLORMAP.entity.get((_r, _g, _b), None)
+                        if char is None:
+                            continue
 
-                    units = units.set(
-                        str(uuid4()),
-                        Unit(
-                            delta=(to_px(x) - offset[0], to_px(y) - offset[1], 0),
-                            sprites=char,
-                            anchor_id=anchor_id,
-                            stamina=123,
-                            health=500,
-                            name="asdf",
-                        ),
-                    )
+                        units = units.set(
+                            str(uuid4()),
+                            Unit(
+                                delta=(to_px(x) - offset[0], to_px(y) - offset[1], 0),
+                                sprites=char,
+                                anchor_id=anchor_id,
+                                stamina=123,
+                                health=500,
+                                name="asdf",
+                            ),
+                        )
 
     g = g.set("tiles", tiles).set("units", units)
 
@@ -1674,7 +1708,7 @@ async def main():
         overlaps=[],
     )
 
-    if False: # if sys.argv[1] == "b":
+    if False:  # if sys.argv[1] == "b":
         p1 = Unit(
             name="boar",
             sprites=models["boar"],
@@ -1731,6 +1765,7 @@ async def main():
 
             initial: Unit = unit
 
+            g = g.transform(("units", guid), unit.set("jumped", max(0, unit.jumped - 1)))
             g = g.movements(pg.key.get_pressed(), *pg.mouse.get_pos())
 
             if tock:  # g.units[guid].stepped % 5 == 0:
@@ -1750,7 +1785,42 @@ async def main():
                 ),
             )
 
+            def at_tile(e):
+                *p, _ = g.position(*g.units[guid].delta)
+                *t, _ = e.delta
+
+                return p == t
+
+            at = next(
+                filter(
+                    at_tile,
+                    filter(is_relevant, g.tiles),
+                ),
+                None,
+            )
+
+            if at is not None and (g.units[guid].delta[2] != at.delta[2]):
+                *xy, z = g.units[guid].delta
+                diff = at.delta[2] - z
+
+                if not g.units[guid].jumped:
+                    changed = tuple(xy) + (z + diff // 1.61803,)
+
+                    g = g.set(
+                        "units",
+                        g.units.transform(
+                            (
+                                guid,
+                                "delta",
+                            ),
+                            changed,
+                        ),
+                    )
+
             candidate = g.facing(g.units[guid])
+            reachable = diff <= 8
+            falling = diff < -8
+
             if candidate is not None:
                 one, other, edge = candidate
                 pos = g.units[guid].relative(edge["delta"])
@@ -1764,7 +1834,13 @@ async def main():
                         filter(is_walkable, filter(is_relevant, g.tiles)),
                     ),
                 )
-                legal = legal or possible
+                legal = (legal or possible) and reachable
+
+            if falling:
+                g = g.set(
+                    "units",
+                    g.units.transform((guid, "health"), g.units[guid].health - 1),
+                )
 
             if not legal:
                 g = g.set("units", g.units.set(guid, initial))
@@ -1777,7 +1853,7 @@ async def main():
                     e
                     for e in g.tiles
                     if e.anchor_id == g.units[guid].anchor_id
-                    and g.accessible(g.units[guid].delta, [e.delta])
+                    and g.accessible(g.units[guid].delta, iter([e.delta]))
                 ]
 
             targets = tuple(
