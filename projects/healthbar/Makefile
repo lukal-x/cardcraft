@@ -1,6 +1,9 @@
 #!make
 
-.PHONY: pygbag
+.PHONY: pygbag sprites
 
 pygbag:
 	.venv/bin/pygbag --archive .
+
+sprites:
+	blender -b -P pipeline.py

@@ -1357,7 +1357,7 @@ async def main():
     frame: dict[str, typing.Any] = {}
 
     sources: dict[str, pg.image] = {
-        "ground_idle": pg.image.load("tiles1.png").convert_alpha()
+        "ground_idle": pg.image.load("tiles_pipeline.png").convert_alpha()
     }
 
     models = {
