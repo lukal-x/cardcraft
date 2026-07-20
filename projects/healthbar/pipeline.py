@@ -18,7 +18,8 @@ PROFILES = {
 
 
 class Apparatus(PClass):
-    sunlight: float = field(type=float, initial=2.5)
+    grid: tuple[int, int] = field(type=tuple, initial=(1, 1))  # N by N grid
+    sunlight: float = field(type=float, initial=1.5)
     rotation: tuple[float, float, float] = field(
         type=tuple, initial=(math.radians(45), math.radians(0), math.radians(135))
     )
@@ -68,20 +69,23 @@ def render(project: Project):
 
     scene.use_nodes = True
 
-    scene.render.resolution_x = 32
-    scene.render.resolution_y = 64
+    scene.render.resolution_x = 32 * project.apparatus.grid[0]
+    scene.render.resolution_y = 64 * project.apparatus.grid[1]
     scene.render.resolution_percentage = 100
 
     scene.render.film_transparent = True
     scene.render.filter_size = 0.01
 
     # camera
+    size = 2.0  # average object size
+
     camera = bpy.data.cameras.new(name="IsoCamera")
     camera.type = "ORTHO"
+    camera.sensor_fit = "VERTICAL"
     camera.ortho_scale = project.apparatus.cam_zoom
 
     # @todo: necessary?
-    camera.shift_y = -0.125
+    # camera.shift_y = -0.125
 
     cam = bpy.data.objects.new(name="IsoCamera", object_data=camera)
 
@@ -138,9 +142,21 @@ def render(project: Project):
 
 
 if __name__ == "__main__":
-    half = 2.0 / 2.0
+    size = 2.0
+    half = size / 2.0
 
-    cube = Asset(
+    first = (-half, -half, -half / 2)
+    second = (half, -half, -half / 2)
+    third = (half, half, -half / 2)
+    fourth = (-half, half, -half / 2)
+    fifth = (-half, -half, half / 2)
+    sixth = (half, -half, half / 2)
+    seventh = (half, half, half / 2)
+    eighth = (-half, half, half / 2)
+
+    dirt = Asset(
+        profile="dirt",
+        material_type="dirt",
         at=(0, 0, 0),
         faces=[
             (0, 1, 2, 3),
@@ -150,22 +166,174 @@ if __name__ == "__main__":
             (2, 6, 7, 3),
             (3, 7, 4, 0),
         ],
+        vertices=[first, second, third, fourth, fifth, sixth, seventh, eighth],
+    )
+
+    grass = Asset(
+        profile="grass",
+        material_type="grass",
+        at=(size * 1, size * 1, 0),
+        faces=[
+            (0, 1, 2, 3),
+            (4, 7, 6, 5),
+            (0, 4, 5, 1),
+            (1, 5, 6, 2),
+            (2, 6, 7, 3),
+            (3, 7, 4, 0),
+        ],
+        vertices=[first, second, third, fourth, fifth, sixth, seventh, eighth],
+    )
+
+    concrete = Asset(
+        profile="concrete",
+        material_type="concrete",
+        at=(size * 2, size * 2, 0),
+        faces=[
+            (0, 1, 2, 3),
+            (4, 7, 6, 5),
+            (0, 4, 5, 1),
+            (1, 5, 6, 2),
+            (2, 6, 7, 3),
+            (3, 7, 4, 0),
+        ],
+        vertices=[first, second, third, fourth, fifth, sixth, seventh, eighth],
+    )
+
+    water = Asset(
+        profile="water",
+        material_type="water",
+        at=(size * 3, size * 3, 0),
+        faces=[
+            (0, 1, 2, 3),
+            (4, 7, 6, 5),
+            (0, 4, 5, 1),
+            (1, 5, 6, 2),
+            (2, 6, 7, 3),
+            (3, 7, 4, 0),
+        ],
+        vertices=[first, second, third, fourth, fifth, sixth, seventh, eighth],
+    )
+
+    dirt_tilt_S = Asset(
+        profile="dirt",
+        material_type="dirt",
+        at=(size * 4, size * 4, 0),
+        faces=[
+            (0, 1, 2, 3),
+            (4, 7, 6, 5),
+            (0, 4, 5, 1),
+            (1, 5, 6, 2),
+            (2, 6, 7, 3),
+            (3, 7, 4, 0),
+        ],
         vertices=[
-            (-half, -half, -half),
-            (half, -half, -half),
-            (half, half, -half),
-            (-half, half, -half),
-            (-half, -half, half),
-            (half, -half, half),
-            (half, half, half),
-            (-half, half, half),
+            first,
+            second,
+            third,
+            fourth,
+            (-half, -half, half / 1),
+            (half, -half, half / 1),
+            seventh,
+            eighth,
         ],
     )
 
+    dirt_tilt_E = Asset(
+        profile="dirt",
+        material_type="dirt",
+        at=(size * 5, size * 5, 0),
+        faces=[
+            (0, 1, 2, 3),
+            (4, 7, 6, 5),
+            (0, 4, 5, 1),
+            (1, 5, 6, 2),
+            (2, 6, 7, 3),
+            (3, 7, 4, 0),
+        ],
+        vertices=[
+            first,
+            second,
+            third,
+            fourth,
+            fifth,
+            (half, -half, half / 1),
+            (half, half, half / 1),
+            eighth,
+        ],
+    )
+
+    dirt_tilt_W = Asset(
+        profile="dirt",
+        material_type="dirt",
+        at=(size * 6, size * 6, 0),
+        faces=[
+            (0, 1, 2, 3),
+            (4, 7, 6, 5),
+            (0, 4, 5, 1),
+            (1, 5, 6, 2),
+            (2, 6, 7, 3),
+            (3, 7, 4, 0),
+        ],
+        vertices=[
+            first,
+            second,
+            third,
+            fourth,
+            (-half, -half, half / 1),
+            sixth,
+            seventh,
+            (-half, half, half / 1),
+        ],
+    )
+
+    dirt_tilt_N = Asset(
+        profile="dirt",
+        material_type="dirt",
+        at=(size * 7, size * 7, 0),
+        faces=[
+            (0, 1, 2, 3),
+            (4, 7, 6, 5),
+            (0, 4, 5, 1),
+            (1, 5, 6, 2),
+            (2, 6, 7, 3),
+            (3, 7, 4, 0),
+        ],
+        vertices=[
+            first,
+            second,
+            third,
+            fourth,
+            fifth,
+            sixth,
+            (half, half, half / 1),
+            (-half, half, half / 1),
+        ],
+    )
+
+    assets = [
+        dirt,
+        grass,
+        concrete,
+        water,
+        dirt_tilt_S,
+        dirt_tilt_E,
+        dirt_tilt_W,
+        dirt_tilt_N,
+    ]
+
+    camx = (min(e.at[0] for e in assets) + max(e.at[0] for e in assets)) / 2
+    camy = (min(e.at[1] for e in assets) + max(e.at[1] for e in assets)) / 2
+    camz = (min(e.at[2] for e in assets) + max(e.at[2] for e in assets)) / 2
+
+    mod = size
+
     projects = [
         Project(
-            apparatus=Apparatus(),
-            assets=[cube],
+            apparatus=Apparatus(
+                grid=(len(assets), 1),
+                cam_at=(camx + mod, camy - mod, camz + mod),
+            ),
+            assets=assets,
         )
     ]
 
